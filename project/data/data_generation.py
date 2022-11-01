@@ -308,3 +308,37 @@ def generate_ellipse():
         thickness = -1
 
         return center, h_axis, v_axis, ang, startAngle, endAngle, color, thickness
+
+
+if __name__ == '__main__':
+  img = np.zeros((320, 320), dtype='uint8')
+
+  img += 40
+
+  shape = get_shape()
+  difficulty = get_difficulty_level()
+  if shape == 'triangle':
+    points = generate_triangle(difficulty)
+  elif shape == 'quad':
+    points = generate_square(difficulty)
+  elif shape == 'ellipse':
+    generate_ellipse()
+
+  cv2.fillPoly(img, pts=[points], color=(144))
+
+  # center,h_axis, v_axis, ang, startAngle, endAngle, color, thickness = generate_ellipse()
+  # importstring = cv2.ellipse(img, center, (h_axis, v_axis), ang,
+  #                           startAngle, endAngle, color, thickness)
+
+  if difficulty > 2:
+    line_points = get_overlapping_line(points)
+    cv2.line(img, line_points[0], line_points[1], 255, 3)
+
+  if difficulty > 3:
+    img = noisy(img, 'poisson')
+    
+  cv2_imshow(img)
+
+  cv2.waitKey(0)
+    
+  cv2.destroyAllWindows()
