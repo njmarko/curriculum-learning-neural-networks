@@ -7,6 +7,10 @@ import random
 from datetime import datetime
 import os
 from generation_utils import pt, line_pt, angle, rotate, noisy, translate, scale, get_translate_range
+import itertools
+from itertools import cycle, islice, product
+
+from pathlib import Path
 
 IMG_DIM = 320
 MAX_OFFSET = 30
@@ -287,8 +291,8 @@ def get_overlapping_line(points):
         )
 
 
-def generate_ellipse():
-    center = np.array([IMG_DIM // 2, IMG_DIM // 2])
+def generate_ellipse(difficulty):
+    center_original = np.array([IMG_DIM // 2, IMG_DIM // 2])
     MAIN_AXIS_LENGHT_THRESHOLD = 25
     SIDE_AXIS_LENGHT_THRESHOLD = 25
     TRANSLATE_RANGE = IMG_DIM // 4
@@ -296,12 +300,16 @@ def generate_ellipse():
         # TODO treba generisati kontrast elipse?
         # TODO napraviti da glavna i sporedna osa ne mogu da odstupaju previše jedna od druge?
         # TODO ubaciti formulu za generisanje svih tacki na elipsi
+        center = center_original.copy()
         ang = angle()  # returns angle between 0 and 360
         startAngle = 0
         endAngle = 360  # creates pacman if less than 360
 
-        h_axis, v_axis = random.randint(MAIN_AXIS_LENGHT_THRESHOLD, IMG_DIM // 4), random.randint(
-            MAIN_AXIS_LENGHT_THRESHOLD, IMG_DIM // 4)  # axis length
+        if difficulty == 1:
+            h_axis = v_axis = random.randint(MAIN_AXIS_LENGHT_THRESHOLD, IMG_DIM // 4)
+        else:
+            h_axis, v_axis = random.randint(MAIN_AXIS_LENGHT_THRESHOLD, IMG_DIM // 4), random.randint(
+                MAIN_AXIS_LENGHT_THRESHOLD, IMG_DIM // 4)  # axis length
 
         transl_h, transl_v = random.randint(-TRANSLATE_RANGE, TRANSLATE_RANGE), random.randint(-TRANSLATE_RANGE,
                                                                                                TRANSLATE_RANGE)
@@ -312,51 +320,98 @@ def generate_ellipse():
 
         points = np.vstack((h_left_pt, h_right_pt, v_bot_pt, v_top_pt))
 
-        points = rotate(points, ang)  # Returns rotated end-of-axis points
+        if difficulty > 1:
+            points = rotate(points, ang)  # Returns rotated end-of-axis points
         if np.any(points < 0) or np.any(points > IMG_DIM):  # TODO check if this works as intended
             continue
 
-        print(points)
+        # print(points)
         # Color in BGR
         color = 120  # TODO: Determine how to select color for shapes based on background and other shape colors if they exist on the image
 
         # Line thickness of -1 px
         thickness = -1
 
-        return center, h_axis, v_axis, ang, startAngle, endAngle, color, thickness
+        return center, h_axis, v_axis, ang, startAngle, endAngle, color, thickness, points
 
 
-if __name__ == '__main__':
+def generate_dataset(dataset_size=1000, path_folder="generated_images/dataset1/"):
+    Path(path_folder).mkdir(parents=True, exist_ok=True)
+    difficulties = [1, 2, 3, 4]
+    functions = [generate_triangle, generate_square,
+                 generate_ellipse
+                 ]
+    label_map = {
+        generate_triangle: "triangle",
+        generate_square: "square",
+        generate_ellipse: "ellipse",
+    }
+
+    prod = list(islice(cycle(product(functions, difficulties)), dataset_size))
+
+    for i, pair in enumerate(prod):
+        img = np.zeros((320, 320), dtype='uint8')
+        img += 40
+
+        func, diff = pair
+        points = func(diff)
+
+        if func == generate_ellipse:
+            center, h_axis, v_axis, ang, startAngle, endAngle, color, thickness, points = func(diff)
+            cv2.ellipse(img, center, (h_axis, v_axis), ang,
+                                      startAngle, endAngle, color, thickness)
+        else:
+            cv2.fillPoly(img, pts=[points], color=144)
+
+        if diff > 2:
+            line_points = get_overlapping_line(points)
+            cv2.line(img, line_points[0], line_points[1], 255, 3)
+
+        if diff > 3:
+            img = noisy(img, 'poisson')
+
+        label = label_map[func]
+
+        cv2.imwrite(os.path.join(path_folder, f"{label}_{str(i)}_diff{diff}.png"), img)
+        # TODO create file that maps image names to labels
+
+
+
+
+def main():
     img = np.zeros((320, 320), dtype='uint8')
 
     img += 40
 
-    shape = get_shape()
-    difficulty = get_difficulty_level()
-    if shape == 'triangle':
-        points = generate_triangle(difficulty)
-    elif shape == 'quad':
-        points = generate_square(difficulty)
-    elif shape == 'ellipse':
-        generate_ellipse()
-
-    cv2.fillPoly(img, pts=[points], color=(144))
+    # shape = get_shape()
+    # difficulty = get_difficulty_level()
+    # if shape == 'triangle':
+    #     points = generate_triangle(difficulty)
+    # elif shape == 'quad':
+    #     points = generate_square(difficulty)
+    # elif shape == 'ellipse':
+    #     generate_ellipse()
+    #
+    # cv2.fillPoly(img, pts=[points], color=(144))
 
     # center,h_axis, v_axis, ang, startAngle, endAngle, color, thickness = generate_ellipse()
     # importstring = cv2.ellipse(img, center, (h_axis, v_axis), ang,
     #                           startAngle, endAngle, color, thickness)
 
-    if difficulty > 2:
-        line_points = get_overlapping_line(points)
-        cv2.line(img, line_points[0], line_points[1], 255, 3)
+    # if difficulty > 2:
+    #     line_points = get_overlapping_line(points)
+    #     cv2.line(img, line_points[0], line_points[1], 255, 3)
+    #
+    # if difficulty > 3:
+    #     img = noisy(img, 'poisson')
 
-    if difficulty > 3:
-        img = noisy(img, 'poisson')
+    # cv2.imshow("nesto", img)
+    #
+    # cv2.waitKey(0)
+    #
+    # cv2.destroyAllWindows()
+    generate_dataset(10000)
 
-    cv2.imshow("nesto", img)
 
-    cv2.waitKey(0)
-
-    cv2.destroyAllWindows()
-
-    cv2.imwrite("proba.png", img)
+if __name__ == '__main__':
+    main()

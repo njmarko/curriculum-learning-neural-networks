@@ -9,16 +9,23 @@ class CnnV1(nn.Module):
         super(CnnV1, self).__init__()
         self.layers = nn.ModuleList([
             nn.Conv2d(1, 16, 3),
-            nn.MaxPool2d(2),
+            nn.ReLU(),
             nn.Conv2d(16, 32, 3),
+            nn.ReLU(),
             nn.MaxPool2d(2),
+
             nn.Conv2d(32, 64, 3),
+            nn.ReLU(),
+            nn.Conv2d(64, 128, 3),
+            nn.ReLU(),
             nn.MaxPool2d(2),
-            nn.Linear(64 * 3 * 3, 128),
-            F.relu,
+
+            nn.Flatten(),
+            nn.Linear(128 * 4 * 4, 256),
+            nn.ReLU(),
             nn.Dropout(0.2),
-            nn.Linear(128, 64),
-            F.relu,
+            nn.Linear(256, 64),
+            nn.ReLU(),
             nn.Dropout(0.2),
             nn.Linear(64, 16),
         ])
