@@ -1,5 +1,6 @@
 # TODO: Inert functions for data generation.
 # TODO: Add a function that can be called to genrate data. Make it parametrized
+import time
 
 import numpy as np
 import cv2
@@ -296,10 +297,13 @@ def generate_ellipse(difficulty):
     MAIN_AXIS_LENGHT_THRESHOLD = 25
     SIDE_AXIS_LENGHT_THRESHOLD = 25
     TRANSLATE_RANGE = IMG_DIM // 4
+    total_errors = 0
+    total_time_in_errors = 0
     while True:
         # TODO treba generisati kontrast elipse?
         # TODO napraviti da glavna i sporedna osa ne mogu da odstupaju previše jedna od druge?
         # TODO ubaciti formulu za generisanje svih tacki na elipsi
+        start = time.time()
         center = center_original.copy()
         ang = angle()  # returns angle between 0 and 360
         startAngle = 0
@@ -323,6 +327,9 @@ def generate_ellipse(difficulty):
         if difficulty > 1:
             points = rotate(points, ang)  # Returns rotated end-of-axis points
         if np.any(points < 0) or np.any(points > IMG_DIM):  # TODO check if this works as intended
+            end = time.time()
+            total_errors += 1
+            total_time_in_errors += end - start
             continue
 
         # print(points)
@@ -331,8 +338,8 @@ def generate_ellipse(difficulty):
 
         # Line thickness of -1 px
         thickness = -1
-
-        return center, h_axis, v_axis, ang, startAngle, endAngle, color, thickness, points
+        # print(f"Errors in ellipse {total_errors}\nTime in errors {total_time_in_errors}")
+        return center, h_axis, v_axis, ang, startAngle, endAngle, color, thickness, points, total_time_in_errors, total_errors
 
 
 def generate_dataset(dataset_size=1000, path_folder="generated_images/dataset1/"):
@@ -348,7 +355,8 @@ def generate_dataset(dataset_size=1000, path_folder="generated_images/dataset1/"
     }
 
     prod = list(islice(cycle(product(functions, difficulties)), dataset_size))
-
+    error_time = 0
+    total_errors = 0
     for i, pair in enumerate(prod):
         img = np.zeros((320, 320), dtype='uint8')
         img += 40
@@ -357,9 +365,11 @@ def generate_dataset(dataset_size=1000, path_folder="generated_images/dataset1/"
         points = func(diff)
 
         if func == generate_ellipse:
-            center, h_axis, v_axis, ang, startAngle, endAngle, color, thickness, points = func(diff)
+            center, h_axis, v_axis, ang, startAngle, endAngle, color, thickness, points, t, e = func(diff)
+            error_time += t
+            total_errors += e
             cv2.ellipse(img, center, (h_axis, v_axis), ang,
-                                      startAngle, endAngle, color, thickness)
+                        startAngle, endAngle, color, thickness)
         else:
             cv2.fillPoly(img, pts=[points], color=144)
 
@@ -374,8 +384,7 @@ def generate_dataset(dataset_size=1000, path_folder="generated_images/dataset1/"
 
         cv2.imwrite(os.path.join(path_folder, f"{label}_{str(i)}_diff{diff}.png"), img)
         # TODO create file that maps image names to labels
-
-
+    print(f"Total errors {total_errors}\nTotal time in ellipse errors {error_time}")
 
 
 def main():
