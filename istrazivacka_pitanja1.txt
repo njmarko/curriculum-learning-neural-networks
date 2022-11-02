@@ -1,0 +1,12 @@
+1. 500 neuronskih mreza iste arhitekture treniraju se razlicito vreme do
+razlicitog stepena istreniranosti na uniformno rasporedjenim primerima. Da li
+se dobije da su one koje su krace trenirane naucile da resavaju neke probleme
+a neke nisu? Odnosno, da li su stigle do nizih stanja znanja?
+2. 500 neuronskih mreza razlicite dubine (ne moraju sve biti razlicite
+dubine), treniraju se dok ne dodju do saturacije. Isto pitanje kao gore.
+3. Razlicite neuronske mreze, razlicit nivo obucavanja (min broj epoha 0, a
+random ga prekidamo na nekoj epohi). Ista pitanja.
+4. Da li mozemo trenirati manju neuronsku mrezu da dobijemo kurikulum za
+treniranje vece neuronske mreze?
+5. Da li mozemo trenirati neuronsku mrezu na jednom skupu primera, i
+generalizovati kurikulum za slozenije primere?

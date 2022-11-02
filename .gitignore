@@ -157,3 +157,7 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# Data folders
+project/data/generated_images
+"
