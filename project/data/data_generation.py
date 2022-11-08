@@ -1,21 +1,22 @@
 # TODO: Inert functions for data generation.
 # TODO: Add a function that can be called to genrate data. Make it parametrized
-import time
 
-import numpy as np
-import cv2
-import random
-from datetime import datetime
 import os
-from generation_utils import pt, line_pt, angle, rotate, noisy, translate, scale, get_translate_range
-import itertools
+import random
+import time
 from itertools import cycle, islice, product
-
 from pathlib import Path
+
+import cv2
+import numpy as np
+from generation_utils import (angle, get_translate_range, noisy,
+                              rotate, scale, translate)
+from data_loader import load_dataset
 
 IMG_DIM = 320
 MAX_OFFSET = 30
-
+DATASET_SIZE = 100
+DATASET_BASE_DIR = '../../generated_images/dataset1/'
 
 def get_difficulty_level():
     print('Difficulty level:')
@@ -381,8 +382,10 @@ def generate_dataset(dataset_size=1000, path_folder="generated_images/dataset1/"
             img = noisy(img, 'poisson')
 
         label = label_map[func]
+        class_dir = os.path.join(path_folder, label)
+        Path(class_dir).mkdir(exist_ok=True)
 
-        cv2.imwrite(os.path.join(path_folder, f"{label}_{str(i)}_diff{diff}.png"), img)
+        cv2.imwrite(os.path.join(class_dir, f"{label}_{str(i)}_diff{diff}.png"), img)
         # TODO create file that maps image names to labels
     print(f"Total errors {total_errors}\nTotal time in ellipse errors {error_time}")
 
@@ -419,7 +422,8 @@ def main():
     # cv2.waitKey(0)
     #
     # cv2.destroyAllWindows()
-    generate_dataset(10000)
+    generate_dataset(DATASET_SIZE)
+    train, test = load_dataset(DATASET_BASE_DIR)
 
 
 if __name__ == '__main__':
