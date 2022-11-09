@@ -13,10 +13,10 @@ from generation_utils import (angle, get_translate_range, noisy,
                               rotate, scale, translate)
 from data_loader import load_dataset
 
-IMG_DIM = 320
-MAX_OFFSET = 30
-DATASET_SIZE = 100
-DATASET_BASE_DIR = '../../generated_images/dataset1/'
+IMG_DIM = 32
+MAX_OFFSET = 10 # TODO: Not used. Remove if not needed
+DATASET_SIZE = 1000
+DATASET_BASE_DIR = 'generated_images/dataset5/'
 
 def get_difficulty_level():
     print('Difficulty level:')
@@ -118,7 +118,7 @@ def calculate_angle(opposite, s1, s2):
 
 
 def generate_triangle(difficulty=1):
-    SIDE_THRESHOLD = 50
+    SIDE_THRESHOLD = 5
     ANGLE_TRESHOLD = 150
     TRANSLATE_RANGE = IMG_DIM
     SCALE_RANGE = 2
@@ -190,8 +190,8 @@ def get_square_points():
 def generate_square(difficulty=2):
     points = get_square_points()
     TRANSLATE_RANGE = IMG_DIM // 2
-    HEIGHT_THRESHOLD = 50
-    SIDE_THRESHOLD = 50
+    HEIGHT_THRESHOLD = 5
+    SIDE_THRESHOLD = 5
 
     while True:
         if difficulty == 1:
@@ -257,46 +257,11 @@ def get_overlapping_line(points):
             ending_point
         )
 
-        if starting_point[0] > ending_point[0]:
-            starting_point, ending_point = ending_point, starting_point
-
-        line_rect_points = [
-            starting_point,
-            [starting_point[1], ending_point[0]],
-            [ending_point[1], starting_point[0]],
-            ending_point
-        ]
-
-        line_top_border = min(line_rect_points, key=lambda v: v[1])[1]
-        line_bottom_border = max(line_rect_points, key=lambda v: v[1])[1]
-        line_left_border = min(line_rect_points, key=lambda v: v[0])[0]
-        line_right_border = max(line_rect_points, key=lambda v: v[0])[0]
-
-        # if (
-        #     top_border > line_bottom_border or
-        #     bottom_border < line_top_border or
-        #     right_border < line_left_border or
-        #     left_border > line_right_border):
-        #   continue
-
-        if not (
-                line_top_border < top_border and
-                line_bottom_border > bottom_border and
-                line_left_border < left_border and
-                line_right_border < right_border
-        ):
-            continue
-
-        return (
-            starting_point,
-            ending_point
-        )
-
 
 def generate_ellipse(difficulty):
     center_original = np.array([IMG_DIM // 2, IMG_DIM // 2])
-    MAIN_AXIS_LENGHT_THRESHOLD = 25
-    SIDE_AXIS_LENGHT_THRESHOLD = 25
+    MAIN_AXIS_LENGHT_THRESHOLD = 5
+    SIDE_AXIS_LENGHT_THRESHOLD = 5
     TRANSLATE_RANGE = IMG_DIM // 4
     total_errors = 0
     total_time_in_errors = 0
@@ -314,7 +279,7 @@ def generate_ellipse(difficulty):
             h_axis = v_axis = random.randint(MAIN_AXIS_LENGHT_THRESHOLD, IMG_DIM // 4)
         else:
             h_axis, v_axis = random.randint(MAIN_AXIS_LENGHT_THRESHOLD, IMG_DIM // 4), random.randint(
-                MAIN_AXIS_LENGHT_THRESHOLD, IMG_DIM // 4)  # axis length
+                SIDE_AXIS_LENGHT_THRESHOLD, IMG_DIM // 4)  # axis length
 
         transl_h, transl_v = random.randint(-TRANSLATE_RANGE, TRANSLATE_RANGE), random.randint(-TRANSLATE_RANGE,
                                                                                                TRANSLATE_RANGE)
@@ -359,7 +324,7 @@ def generate_dataset(dataset_size=1000, path_folder="generated_images/dataset1/"
     error_time = 0
     total_errors = 0
     for i, pair in enumerate(prod):
-        img = np.zeros((320, 320), dtype='uint8')
+        img = np.zeros((IMG_DIM, IMG_DIM), dtype='uint8')
         img += 40
 
         func, diff = pair
@@ -376,7 +341,7 @@ def generate_dataset(dataset_size=1000, path_folder="generated_images/dataset1/"
 
         if diff > 2:
             line_points = get_overlapping_line(points)
-            cv2.line(img, line_points[0], line_points[1], 255, 3)
+            cv2.line(img, line_points[0], line_points[1], 255, 1)
 
         if diff > 3:
             img = noisy(img, 'poisson')
@@ -391,7 +356,7 @@ def generate_dataset(dataset_size=1000, path_folder="generated_images/dataset1/"
 
 
 def main():
-    img = np.zeros((320, 320), dtype='uint8')
+    img = np.zeros((IMG_DIM, IMG_DIM), dtype='uint8')
 
     img += 40
 
@@ -422,7 +387,7 @@ def main():
     # cv2.waitKey(0)
     #
     # cv2.destroyAllWindows()
-    generate_dataset(DATASET_SIZE)
+    generate_dataset(DATASET_SIZE, DATASET_BASE_DIR)
     train, test = load_dataset(DATASET_BASE_DIR)
 
 
