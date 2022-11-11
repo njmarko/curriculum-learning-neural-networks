@@ -17,6 +17,7 @@ from sklearn.metrics import f1_score
 import timeit
 from data.data_loader import load_dataset
 
+
 def train(model, optimizer, data_loader, loss_history=None, scheduler=None, device='cpu'):
     if loss_history is None:
         loss_history = []
@@ -36,12 +37,13 @@ def train(model, optimizer, data_loader, loss_history=None, scheduler=None, devi
         loss = F.nll_loss(probs, target)
         loss.backward()
         optimizer.step()
+        scheduler.step()
 
         correct_samples += pred.eq(target).sum()
         target = target.cpu().detach().numpy()
         pred = pred.cpu().detach().numpy()
 
-        f1_score_micro = f1_score(pred, target, average='micro')
+        f1_score_micro = f1_score(pred, target, average='macro')
 
         if i % 100 == 0:
             print(f"{f1_score_micro=}")
@@ -89,7 +91,7 @@ def validation(model, data_loader, loss_history=None, device='cpu'):
     acc = 100.0 * correct_samples / total_samples
     loss_history.append(avg_loss)
 
-    f1 = f1_score(global_target, global_pred, average='micro')
+    f1 = f1_score(global_target, global_pred, average='macro')
     print(f"Validation {acc=} {f1=}")
     return acc
 
@@ -97,8 +99,11 @@ def validation(model, data_loader, loss_history=None, device='cpu'):
 def main():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(device)
+    if device == 'cuda':
+        print(f'GPU {torch.cuda.get_device_name(0)}')
     parser = argparse.ArgumentParser()
-    parser.add_argument('-d', '--dataset', type=str, default="data/generated_images/dataset5", help="Path to the dataset")
+    parser.add_argument('-d', '--dataset', type=str, default="data/generated_images/dataset3",
+                        help="Path to the dataset")
     parser.add_argument('-e', '--n_epochs', type=int, default=20)
     parser.add_argument('-exp_name', '--exp_name', type=str, default="default_experiment")
     parser.add_argument('-lr', '--learning_rate', type=float, default=3e-4)
@@ -116,27 +121,47 @@ def main():
     # Define model
     model = CnnV1()
     optimizer = optim.AdamW(model.parameters(), lr=opt.learning_rate, weight_decay=opt.weight_decay)
-    # TODO: Add scheduler
+    # TODO: Add warmup if necessary
+    scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=0.001, max_lr=3e-4, step_size_up=5,
+                                                  cycle_momentum=False, mode="triangular2")
+
     model = model.to(device)
 
     train_loader, val_loader = load_dataset(base_dir=opt.dataset, batch_size=opt.batch_size,
                                             shuffle=opt.shuffle, num_workers=opt.num_workers)
 
     best_model_acc = -np.Inf
+    best_model_path = None
     best_epoch = 0
     for epoch in range(opt.n_epochs):
         print(f"{epoch=}")
-        train(model=model, optimizer=optimizer, data_loader=train_loader, device=device)
+        train(model=model, optimizer=optimizer, data_loader=train_loader, device=device, scheduler=scheduler)
         val_acc = validation(model=model, data_loader=val_loader, device=device)
 
-        # if val_acc > best_model_acc:
-        #     print(f"Saving model with new best {val_acc=}")
-        #     best_model_acc, best_epoch = val_acc, epoch
-            # Path(f'experiments/{opt.exp_name}').mkdir(exist_ok=True)
-            # torch.save(model.state_dict(), os.path.join(f'experiments/{opt.exp_name}',
-            #                                             f'train-{opt.exp_name}-{epoch}-acc{val_acc}'))
+        if val_acc > best_model_acc:
+            print(f"Saving model with new best {val_acc=}")
+            best_model_acc, best_epoch = val_acc, epoch
+            Path(f'experiments/{opt.exp_name}').mkdir(exist_ok=True)
+            new_best_path = os.path.join(f'experiments/{opt.exp_name}',
+                                         f'train-{opt.exp_name}-e{epoch}-metric{val_acc:.4f}.pt')
+            torch.save(model.state_dict(), new_best_path)
+            if best_model_path:
+                os.remove(best_model_path)
+            best_model_path = new_best_path
 
-        # TODO: Add early stopping
+        # TODO: Add early stopping - Maybe not needed for this experiment
+
+    # Test loading
+    # model = CnnV1()
+    # model.load_state_dict(torch.load("experiments/default_experiment/train-default_experiment-3-acc54.55000305175781"))
+    # model.to(device)
+    # model.eval()
+    # pytorch_total_params = sum(p.numel() for p in model.parameters())
+    # print(pytorch_total_params)
+    # train_loader, val_loader = load_dataset(base_dir=opt.dataset, batch_size=opt.batch_size,
+    #                                         shuffle=opt.shuffle, num_workers=opt.num_workers)
+    # res = validation(model=model, data_loader=val_loader, device=device)
+    # print(res)
 
 
 if __name__ == "__main__":

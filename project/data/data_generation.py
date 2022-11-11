@@ -1,5 +1,7 @@
 # TODO: Inert functions for data generation.
 # TODO: Add a function that can be called to genrate data. Make it parametrized
+# TODO: Add colors for shapes
+# TODO: Parametrize with ArgumentParser
 
 import os
 import random
