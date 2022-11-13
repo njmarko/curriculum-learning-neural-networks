@@ -5,7 +5,8 @@ from torchvision import transforms
 from torchvision.datasets import ImageFolder
 from torch.utils.data import DataLoader, random_split
 
-def load_dataset(base_dir, lengths=None, batch_size=64, shuffle=True, num_workers=4, pin_memory=True):
+
+def load_dataset(base_dir, lengths=None, batch_size=64, shuffle=True, num_workers=4, pin_memory=False):
     if lengths is None:
         lengths = [0.8, 0.2]
     transform = transforms.Compose([

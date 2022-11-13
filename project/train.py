@@ -5,6 +5,7 @@
 
 import argparse
 import os
+import time
 import timeit
 from pathlib import Path
 
@@ -16,6 +17,8 @@ from torch import optim
 
 from data.data_loader import load_dataset
 from models.cnn_v1 import CnnV1
+from itertools import repeat, cycle, islice
+import torch.multiprocessing as mp
 
 
 # TODO: add argrapser opt parameter instead of specific parameters
@@ -113,7 +116,7 @@ def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choi
                         help="Path to the dataset")
     parser.add_argument('-b', '--batch_size', type=int, default=32, help="Batch size")
     parser.add_argument('-shuffle', '--shuffle', type=bool, default=True, help="Shuffle dataset")
-    parser.add_argument('-nw', '--num_workers', type=int, default=1, help="Number of workers to be used")
+    parser.add_argument('-nw', '--num_workers', type=int, default=0, help="Number of workers to be used")
 
     # Model options
     parser.add_argument('-m', '--model', type=str.lower, default=CnnV1.__name__,
@@ -124,6 +127,9 @@ def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choi
     parser.add_argument('-e', '--n_epochs', type=int, default=20, help="Number of epochs")
     parser.add_argument('-exp_name', '--exp_name', type=str, default="default_experiment",
                         help="Name of the experiment")
+    parser.add_argument('-nm', '--n_models', type=int, default=50, help="Number of models to be trained")
+    parser.add_argument('-pp', '--parallel_processes', type=int, default=0,
+                        help="Number of parallel processes to spawn for models [0 for all available cores]")
 
     # Optimizer options
     parser.add_argument('-optim', '--optimizer', type=str.lower, default="adamw",
@@ -150,13 +156,51 @@ def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choi
     return parser
 
 
+def find_balanced_chunk_size(lst_size, n_processes):
+    chunk = lst_size // (n_processes - 1)
+    # Balanced chunks (ex. list of len 50 will be split into 4 chunks of lengths [13,13,13,11] instead of [16,16,16,2]
+    while lst_size % chunk < chunk and lst_size // (chunk - 1) < n_processes:
+        chunk -= 1
+    return chunk
+
+
+def get_chunked_lists(opt):
+    model_ids = [f'model_{i}' for i in range(opt.n_models)]
+    if opt.parallel_processes == 0:
+        chunk = len(model_ids) // (mp.cpu_count() - 1)
+    else:
+        chunk = len(model_ids) // (opt.parallel_processes - 1)
+        # Balanced chunks
+        while len(model_ids) % chunk < chunk and len(model_ids) // (chunk - 1) < opt.parallel_processes:
+            chunk -= 1
+    epochs = [e for e in range(10, opt.n_epochs)]
+    epoch_ranges = list(islice(cycle(epochs), opt.n_models))
+    epoch_splits = [epoch_ranges[i:i + chunk] for i in range(0, len(epoch_ranges), chunk)]
+    model_id_splits = [model_ids[i:i + chunk] for i in range(0, len(model_ids), chunk)]
+    return epoch_splits, model_id_splits
+
+
 def create_experiments():
     # TODO: Run Experiments in parallel
     # TODO: Pass specific options for each experiment
-    run_experiment()
+    # TODO: Determine if it is better to create all processes at the start, where each process goes through the slice
+    #  of list of all epochs, or create them for each experiment where each experiment takes only one epoch value
+
+    parser = create_arg_parser()
+    opt = parser.parse_args()
+
+    model_ids = [f'model_{i}' for i in range(opt.n_models)]
+    epochs = [e for e in range(10, opt.n_epochs)]
+    # TODO: Find a way to slice the epochs if number of models is lower than number of epochs.
+    #  In that case, maybe every second or third epoch should be tested
+    epoch_ranges = list(islice(cycle(epochs), opt.n_models))
+    print(len(epoch_ranges))
+
+    with mp.Pool(opt.parallel_processes) as pool:
+        pool.starmap(run_experiment, zip(epoch_ranges, model_ids))
 
 
-def run_experiment():
+def run_experiment(epoch, model_id):
     # Model options
     model_choices = {CnnV1.__name__.lower(): CnnV1, }  # TODO: Add more model choices
 
@@ -169,6 +213,11 @@ def run_experiment():
     parser = create_arg_parser(model_choices=model_choices, optimizer_choices=optimizer_choices,
                                scheduler_choices=scheduler_choices)
     opt = parser.parse_args()
+
+    opt.n_epochs = epoch
+    print(f'{model_id} is training')
+
+    # Add specific options for experiments
 
     opt.device = 'cuda' if torch.cuda.is_available() and (opt.device == 'cuda') else 'cpu'
     print(opt.device)
@@ -187,6 +236,7 @@ def run_experiment():
     optimizer = optimizer_choices[opt.optimizer](model.parameters(), lr=opt.learning_rate,
                                                  weight_decay=opt.weight_decay)
 
+
     scheduler = scheduler_choices[opt.scheduler](optimizer=optimizer, base_lr=opt.base_lr, max_lr=opt.max_lr,
                                                  step_size_up=opt.step_size_up,
                                                  cycle_momentum=opt.cycle_momentum, mode=opt.scheduler_mode)
@@ -194,8 +244,11 @@ def run_experiment():
     model = model.to(opt.device)
 
     # TODO: Determine if we need to fix the seed for every dataset
+    # TODO: Determine how random split is created. Maybe make sure that it always takes a certain percentage of
+    #  easy, medium and hard examples
+    # TODO: Decide if pin_memory is worth it
     train_loader, val_loader = load_dataset(base_dir=opt.dataset, batch_size=opt.batch_size,
-                                            shuffle=opt.shuffle, num_workers=opt.num_workers)
+                                            shuffle=opt.shuffle, num_workers=opt.num_workers, pin_memory=False)
 
     best_model_acc = -np.Inf
     best_model_path = None
