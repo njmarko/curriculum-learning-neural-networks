@@ -161,4 +161,4 @@ dist
 # Data folders
 generated_images
 project/data/generated_images
-"
+project/experiments

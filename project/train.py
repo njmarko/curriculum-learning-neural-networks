@@ -98,9 +98,14 @@ def validation(model, data_loader, loss_history=None, device='cpu'):
     return acc
 
 
-def main():
-    # TODO: Move Argparser creation to a separate function. Pass choices as params
-    # TODO: Create a new function that can run every individual experiment. This will allow easier parallelization
+def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choices=None):
+    # Default values for choices
+    if scheduler_choices is None:
+        scheduler_choices = {'cycliclr': optim.lr_scheduler.CyclicLR}
+    if optimizer_choices is None:
+        optimizer_choices = {'adamw': optim.AdamW}
+    if model_choices is None:
+        model_choices = {'cnnv1': CnnV1}
 
     parser = argparse.ArgumentParser()
     # Dataset options
@@ -111,7 +116,6 @@ def main():
     parser.add_argument('-nw', '--num_workers', type=int, default=1, help="Number of workers to be used")
 
     # Model options
-    model_choices = {CnnV1.__name__.lower(): CnnV1, }  # TODO: Add model choices
     parser.add_argument('-m', '--model', type=str.lower, default=CnnV1.__name__,
                         choices=model_choices.keys(),
                         help=f"Model to be used for training {model_choices.keys()}")
@@ -120,8 +124,8 @@ def main():
     parser.add_argument('-e', '--n_epochs', type=int, default=20, help="Number of epochs")
     parser.add_argument('-exp_name', '--exp_name', type=str, default="default_experiment",
                         help="Name of the experiment")
+
     # Optimizer options
-    optimizer_choices = {optim.AdamW.__name__.lower(): optim.AdamW, }  # TODO: Add optimizer choices
     parser.add_argument('-optim', '--optimizer', type=str.lower, default="adamw",
                         choices=optimizer_choices.keys(),
                         help=f'Optimizer to be used {optimizer_choices.keys()}')
@@ -129,8 +133,6 @@ def main():
     parser.add_argument('-wd', '--weight_decay', type=float, default=0.05, help="Weight decay for optimizer")
 
     # Scheduler options
-    scheduler_choices = {
-        optim.lr_scheduler.CyclicLR.__name__.lower(): optim.lr_scheduler.CyclicLR, }  # TODO: Add scheduler choices
     parser.add_argument('-sch', '--scheduler', type=str.lower, default='cycliclr',
                         choices=scheduler_choices.keys(),
                         help=f'Optimizer to be used {scheduler_choices.keys()}')
@@ -145,6 +147,27 @@ def main():
     parser.add_argument('-sch_m', '--scheduler_mode', type=str, default="triangular2",
                         choices=['triangular', 'triangular2', 'exp_range'],
                         help=f"CyclicLR scheduler: mode {['triangular', 'triangular2', 'exp_range']}")
+    return parser
+
+
+def create_experiments():
+    # TODO: Run Experiments in parallel
+    # TODO: Pass specific options for each experiment
+    run_experiment()
+
+
+def run_experiment():
+    # Model options
+    model_choices = {CnnV1.__name__.lower(): CnnV1, }  # TODO: Add more model choices
+
+    optimizer_choices = {optim.AdamW.__name__.lower(): optim.AdamW, }  # TODO: Add more optimizer choices
+
+    # Scheduler options
+    scheduler_choices = {
+        optim.lr_scheduler.CyclicLR.__name__.lower(): optim.lr_scheduler.CyclicLR, }  # TODO: Add more scheduler choices
+
+    parser = create_arg_parser(model_choices=model_choices, optimizer_choices=optimizer_choices,
+                               scheduler_choices=scheduler_choices)
     opt = parser.parse_args()
 
     opt.device = 'cuda' if torch.cuda.is_available() and (opt.device == 'cuda') else 'cpu'
@@ -157,19 +180,20 @@ def main():
     # Define model
     model = model_choices[opt.model]()  # TODO: Add model parameters
 
-    # TODO: Test SGD with momentum with parameters that look simmilar to this
+    # TODO: Test SGD with momentum with parameters that look similar to this
     #  optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
     #  scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=0.01, max_lr=0.1)
 
     optimizer = optimizer_choices[opt.optimizer](model.parameters(), lr=opt.learning_rate,
                                                  weight_decay=opt.weight_decay)
 
-    scheduler = scheduler_choices[opt.scheduler](optimizer, base_lr=opt.base_lr, max_lr=opt.max_lr,
+    scheduler = scheduler_choices[opt.scheduler](optimizer=optimizer, base_lr=opt.base_lr, max_lr=opt.max_lr,
                                                  step_size_up=opt.step_size_up,
                                                  cycle_momentum=opt.cycle_momentum, mode=opt.scheduler_mode)
 
     model = model.to(opt.device)
 
+    # TODO: Determine if we need to fix the seed for every dataset
     train_loader, val_loader = load_dataset(base_dir=opt.dataset, batch_size=opt.batch_size,
                                             shuffle=opt.shuffle, num_workers=opt.num_workers)
 
@@ -207,6 +231,10 @@ def main():
     #                                         shuffle=opt.shuffle, num_workers=opt.num_workers)
     # res = validation(model=model, data_loader=val_loader, device=device)
     # print(res)
+
+
+def main():
+    create_experiments()
 
 
 if __name__ == "__main__":
