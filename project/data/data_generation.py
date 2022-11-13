@@ -15,10 +15,11 @@ from generation_utils import (angle, get_translate_range, noisy,
                               rotate, scale, translate)
 from data_loader import load_dataset
 
-IMG_DIM = 32
+IMG_DIM = 96
 MAX_OFFSET = 10 # TODO: Not used. Remove if not needed
 DATASET_SIZE = 1000
 DATASET_BASE_DIR = 'generated_images/dataset5/'
+COLOR_GRADIENT_THRESHOLD = 50
 
 def get_difficulty_level():
     print('Difficulty level:')
@@ -327,7 +328,13 @@ def generate_dataset(dataset_size=1000, path_folder="generated_images/dataset1/"
     total_errors = 0
     for i, pair in enumerate(prod):
         img = np.zeros((IMG_DIM, IMG_DIM), dtype='uint8')
-        img += 40
+        while True:
+            bg_color = random.randint(0, 255)
+            fig_color = random.randint(0, 255)
+            if abs(bg_color-fig_color) > COLOR_GRADIENT_THRESHOLD:
+                break
+
+        img += bg_color
 
         func, diff = pair
         points = func(diff)
@@ -337,9 +344,10 @@ def generate_dataset(dataset_size=1000, path_folder="generated_images/dataset1/"
             error_time += t
             total_errors += e
             cv2.ellipse(img, center, (h_axis, v_axis), ang,
-                        startAngle, endAngle, color, thickness)
+                        startAngle, endAngle, fig_color, thickness)
         else:
-            cv2.fillPoly(img, pts=[points], color=144)
+            cv2.fillPoly(img, pts=[points], color=fig_color
+            )
 
         if diff > 2:
             line_points = get_overlapping_line(points)
@@ -357,10 +365,71 @@ def generate_dataset(dataset_size=1000, path_folder="generated_images/dataset1/"
     print(f"Total errors {total_errors}\nTotal time in ellipse errors {error_time}")
 
 
-def main():
-    img = np.zeros((IMG_DIM, IMG_DIM), dtype='uint8')
+def generate_by_difficulty(dataset_size=250, path_folder="generated_images/dataset1/", difficulty=1):
+    Path(path_folder).mkdir(parents=True, exist_ok=True)
+    functions = [generate_triangle, generate_square,
+                 generate_ellipse
+                 ]
+    label_map = {
+        generate_triangle: "triangle",
+        generate_square: "square",
+        generate_ellipse: "ellipse",
+    }
+    diff_map = {
+        1: 'easy',
+        2: 'medium_easy',
+        3: 'medium_hard',
+        4: 'hard',
+    }
 
-    img += 40
+    error_time = 0
+    total_errors = 0
+    loop_ctrl = list(islice(cycle(functions), dataset_size))
+    for i, func in enumerate(loop_ctrl):
+        img = np.zeros((IMG_DIM, IMG_DIM), dtype='uint8')
+        while True:
+            bg_color = random.randint(0, 255)
+            fig_color = random.randint(0, 255)
+            if abs(bg_color-fig_color) > COLOR_GRADIENT_THRESHOLD:
+                break
+
+        img += bg_color
+
+        points = func(difficulty)
+
+        if func == generate_ellipse:
+            center, h_axis, v_axis, ang, startAngle, endAngle, color, thickness, points, t, e = func(difficulty)
+            error_time += t
+            total_errors += e
+            cv2.ellipse(img, center, (h_axis, v_axis), ang,
+                        startAngle, endAngle, fig_color, thickness)
+        else:
+            cv2.fillPoly(img, pts=[points], color=fig_color
+            )
+
+        if difficulty > 2:
+            line_points = get_overlapping_line(points)
+            cv2.line(img, line_points[0], line_points[1], 255, 1)
+
+        if difficulty > 3:
+            img = noisy(img, 'poisson')
+
+        difficulty_label = diff_map[difficulty]
+        shape_label = label_map[func]
+        class_dir = os.path.join(path_folder, difficulty_label, shape_label)
+        Path(class_dir).mkdir(parents=True, exist_ok=True)
+        img_path = os.path.join(class_dir, f"{shape_label}_{str(i)}_diff{difficulty}.png")
+        print(f'Saving of shape {shape_label} and difficulty {difficulty_label} image at: {img_path}')
+        cv2.imwrite(img_path, img)
+        # TODO create file that maps image names to labels
+    print(f"Total errors {total_errors}\nTotal time in ellipse errors {error_time}")
+
+
+
+def main():
+    # img = np.zeros((IMG_DIM, IMG_DIM), dtype='uint8')
+
+    # img += 40
 
     # shape = get_shape()
     # difficulty = get_difficulty_level()
@@ -389,8 +458,10 @@ def main():
     # cv2.waitKey(0)
     #
     # cv2.destroyAllWindows()
-    generate_dataset(DATASET_SIZE, DATASET_BASE_DIR)
-    train, test = load_dataset(DATASET_BASE_DIR)
+    # generate_dataset(DATASET_SIZE, DATASET_BASE_DIR)
+    for i in range(1, 5):
+        generate_by_difficulty(30, ".\\generated_images\\dataset2\\", i)
+    # train, test = load_dataset(DATASET_BASE_DIR)
 
 
 if __name__ == '__main__':
