@@ -1,23 +1,24 @@
-# TODO: Add training loop
 # TODO: Log experiment results with wandb
 # TODO: Save models and results in experiments folder
 # TODO: Create argparser for all parameters that can be defined
+# TODO: Add parallelized training and logging for all experiments
+
 import argparse
 import os
+import timeit
 from pathlib import Path
 
 import numpy as np
-from torch import optim
-
-from models.cnn_v1 import CnnV1
-
 import torch
 import torch.nn.functional as F
 from sklearn.metrics import f1_score
-import timeit
+from torch import optim
+
 from data.data_loader import load_dataset
+from models.cnn_v1 import CnnV1
 
 
+# TODO: add argrapser opt parameter instead of specific parameters
 def train(model, optimizer, data_loader, loss_history=None, scheduler=None, device='cpu'):
     if loss_history is None:
         loss_history = []
@@ -56,6 +57,7 @@ def train(model, optimizer, data_loader, loss_history=None, scheduler=None, devi
     return acc
 
 
+# TODO: add argrapser opt parameter instead of specific parameters
 def validation(model, data_loader, loss_history=None, device='cpu'):
     if loss_history is None:
         loss_history = []
@@ -97,35 +99,76 @@ def validation(model, data_loader, loss_history=None, device='cpu'):
 
 
 def main():
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(device)
-    if device == 'cuda':
-        print(f'GPU {torch.cuda.get_device_name(0)}')
+    # TODO: Move Argparser creation to a separate function. Pass choices as params
+    # TODO: Create a new function that can run every individual experiment. This will allow easier parallelization
+
     parser = argparse.ArgumentParser()
+    # Dataset options
     parser.add_argument('-d', '--dataset', type=str, default="data/generated_images/dataset3",
                         help="Path to the dataset")
-    parser.add_argument('-e', '--n_epochs', type=int, default=20)
-    parser.add_argument('-exp_name', '--exp_name', type=str, default="default_experiment")
-    parser.add_argument('-lr', '--learning_rate', type=float, default=3e-4)
-    parser.add_argument('-wd', '--weight_decay', type=float, default=0.05)
-    parser.add_argument('-optim', '--optimizer', type=str.lower,
-                        choices=['adamw'],
-                        help='Optimizer to be used [adamw]')  # TODO: Add optimizer choices
-    parser.add_argument('-b', '--batch_size', type=int, default=32)
-    parser.add_argument('-shuffle', '--shuffle', type=bool, default=True)
-    parser.add_argument('-nw', '--num_workers', type=int, default=1)
+    parser.add_argument('-b', '--batch_size', type=int, default=32, help="Batch size")
+    parser.add_argument('-shuffle', '--shuffle', type=bool, default=True, help="Shuffle dataset")
+    parser.add_argument('-nw', '--num_workers', type=int, default=1, help="Number of workers to be used")
 
+    # Model options
+    model_choices = {CnnV1.__name__.lower(): CnnV1, }  # TODO: Add model choices
+    parser.add_argument('-m', '--model', type=str.lower, default=CnnV1.__name__,
+                        choices=model_choices.keys(),
+                        help=f"Model to be used for training {model_choices.keys()}")
+    # Training options
+    parser.add_argument('-device', '--device', type=str, default='cuda', help="Device to be used")
+    parser.add_argument('-e', '--n_epochs', type=int, default=20, help="Number of epochs")
+    parser.add_argument('-exp_name', '--exp_name', type=str, default="default_experiment",
+                        help="Name of the experiment")
+    # Optimizer options
+    optimizer_choices = {optim.AdamW.__name__.lower(): optim.AdamW, }  # TODO: Add optimizer choices
+    parser.add_argument('-optim', '--optimizer', type=str.lower, default="adamw",
+                        choices=optimizer_choices.keys(),
+                        help=f'Optimizer to be used {optimizer_choices.keys()}')
+    parser.add_argument('-lr', '--learning_rate', type=float, default=3e-4, help="Learning rate")
+    parser.add_argument('-wd', '--weight_decay', type=float, default=0.05, help="Weight decay for optimizer")
+
+    # Scheduler options
+    scheduler_choices = {
+        optim.lr_scheduler.CyclicLR.__name__.lower(): optim.lr_scheduler.CyclicLR, }  # TODO: Add scheduler choices
+    parser.add_argument('-sch', '--scheduler', type=str.lower, default='cycliclr',
+                        choices=scheduler_choices.keys(),
+                        help=f'Optimizer to be used {scheduler_choices.keys()}')
+    parser.add_argument('-base_lr', '--base_lr', type=float, default=0.001,
+                        help="Base learning rate for scheduler")
+    parser.add_argument('-max_lr', '--max_lr', type=float, default=3e-4,
+                        help="Max learning rate for scheduler")
+    parser.add_argument('-step_size_up', '--step_size_up', type=int, default=5,
+                        help="CycleLR scheduler: step size up")
+    parser.add_argument('-cyc_mom', '--cycle_momentum', type=bool, default=False,
+                        help="CyclicLR scheduler: cycle momentum in scheduler")
+    parser.add_argument('-sch_m', '--scheduler_mode', type=str, default="triangular2",
+                        choices=['triangular', 'triangular2', 'exp_range'],
+                        help=f"CyclicLR scheduler: mode {['triangular', 'triangular2', 'exp_range']}")
     opt = parser.parse_args()
+
+    opt.device = 'cuda' if torch.cuda.is_available() and (opt.device == 'cuda') else 'cpu'
+    print(opt.device)
+    if opt.device == 'cuda':
+        print(f'GPU {torch.cuda.get_device_name(0)}')
+
     # TODO: Log arg options in wandb
 
     # Define model
-    model = CnnV1()
-    optimizer = optim.AdamW(model.parameters(), lr=opt.learning_rate, weight_decay=opt.weight_decay)
-    # TODO: Add warmup if necessary
-    scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=0.001, max_lr=3e-4, step_size_up=5,
-                                                  cycle_momentum=False, mode="triangular2")
+    model = model_choices[opt.model]()  # TODO: Add model parameters
 
-    model = model.to(device)
+    # TODO: Test SGD with momentum with parameters that look simmilar to this
+    #  optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
+    #  scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=0.01, max_lr=0.1)
+
+    optimizer = optimizer_choices[opt.optimizer](model.parameters(), lr=opt.learning_rate,
+                                                 weight_decay=opt.weight_decay)
+
+    scheduler = scheduler_choices[opt.scheduler](optimizer, base_lr=opt.base_lr, max_lr=opt.max_lr,
+                                                 step_size_up=opt.step_size_up,
+                                                 cycle_momentum=opt.cycle_momentum, mode=opt.scheduler_mode)
+
+    model = model.to(opt.device)
 
     train_loader, val_loader = load_dataset(base_dir=opt.dataset, batch_size=opt.batch_size,
                                             shuffle=opt.shuffle, num_workers=opt.num_workers)
@@ -135,9 +178,11 @@ def main():
     best_epoch = 0
     for epoch in range(opt.n_epochs):
         print(f"{epoch=}")
-        train(model=model, optimizer=optimizer, data_loader=train_loader, device=device, scheduler=scheduler)
-        val_acc = validation(model=model, data_loader=val_loader, device=device)
+        train(model=model, optimizer=optimizer, data_loader=train_loader, device=opt.device, scheduler=scheduler)
+        val_acc = validation(model=model, data_loader=val_loader, device=opt.device)
 
+        # TODO: Save both best model and last model for the experiment
+        #  (ex. best was in epoch 16 but last was also saved in epoch 20)
         if val_acc > best_model_acc:
             print(f"Saving model with new best {val_acc=}")
             best_model_acc, best_epoch = val_acc, epoch
