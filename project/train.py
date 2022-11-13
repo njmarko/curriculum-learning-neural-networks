@@ -122,6 +122,17 @@ def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choi
     parser.add_argument('-m', '--model', type=str.lower, default=CnnV1.__name__,
                         choices=model_choices.keys(),
                         help=f"Model to be used for training {model_choices.keys()}")
+    parser.add_argument('-depth', '--depth', type=int, default=2, help="Model depth")
+    parser.add_argument('-in_channels', '--in_channels', type=int, default=1, help="Number of in channels")
+    parser.add_argument('-out_channels', '--out_channels', type=int, default=8, help="Number of out channels")
+    parser.add_argument('-kernel_dim', '--kernel_dim', type=int, default=3,
+                        help="Kernel dimension used by CNN models")
+    parser.add_argument('-mlp_dim', '--mlp_dim', type=int, default=16, help="Dimension of mlp at the end of the model")
+    parser.add_argument('-padding', '--padding', type=int, default=1, help="Padding used by CNN models")
+    parser.add_argument('-stride', '--stride', type=int, default=1, help="Stride used by CNN models")
+    parser.add_argument('-max_pool', '--max_pool', type=int, default=3, help="Max pool dimensions used by CNN models")
+    parser.add_argument('-dropout', '--dropout', type=float, default=0.2, help="Dropout used in models")
+
     # Training options
     parser.add_argument('-device', '--device', type=str, default='cuda', help="Device to be used")
     parser.add_argument('-e', '--n_epochs', type=int, default=20, help="Number of epochs")
@@ -227,7 +238,10 @@ def run_experiment(epoch, model_id):
     # TODO: Log arg options in wandb
 
     # Define model
-    model = model_choices[opt.model]()  # TODO: Add model parameters
+    model = model_choices[opt.model](depth=opt.depth, in_channels=opt.in_channels, out_channels=opt.out_channels,
+                                     kernel_dim=opt.kernel_dim, mlp_dim=opt.mlp_dim, padding=opt.padding,
+                                     stride=opt.stride, max_pool=opt.max_pool,
+                                     dropout=opt.dropout)
 
     # TODO: Test SGD with momentum with parameters that look similar to this
     #  optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
@@ -235,7 +249,6 @@ def run_experiment(epoch, model_id):
 
     optimizer = optimizer_choices[opt.optimizer](model.parameters(), lr=opt.learning_rate,
                                                  weight_decay=opt.weight_decay)
-
 
     scheduler = scheduler_choices[opt.scheduler](optimizer=optimizer, base_lr=opt.base_lr, max_lr=opt.max_lr,
                                                  step_size_up=opt.step_size_up,
