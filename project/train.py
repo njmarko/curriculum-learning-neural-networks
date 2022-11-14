@@ -8,7 +8,7 @@
 #  https://wandb.ai/wandb-smle/integration_best_practices/reports/W-B-Integration-Best-Practices--VmlldzoyMzc5MTI2
 # TODO: Fix error that appears at the start
 #  wandb: ERROR Failed to sample metric: Not Supported
-# TODO: Fix warning
+# TODO: Fix warning that probably happens for AUROC
 #  ....\project\venv\lib\site-packages\torchmetrics\utilities\prints.py:36:
 #  UserWarning: No positive samples in targets, true positive value should be meaningless.
 #  Returning zero tensor in true positive score
@@ -101,6 +101,7 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
         "train_epoch_loss": epoch_loss,
         "train_epoch_time": epoch_time,
         # TODO: Check if the class names correspond to the right label numbers
+        # TODO: Determine why so many (up to 77) run_table artifacts are saved in wandb for roc and confusion matrix
         "train_confusion_matrix": wandb.plot.confusion_matrix(probs=global_probs, y_true=global_target,
                                                               class_names=['ellipse', 'square', 'triangle'],
                                                               title="Train confusion matrix"),
@@ -316,6 +317,8 @@ def create_experiments():
 
 
 def run_experiment(max_epoch, model_id):
+    # TODO: Make run_experiment more generic to support different types of experiments other than variable epochs ones
+
     # Model options
     model_choices = {CnnV1.__name__.lower(): CnnV1, }  # TODO: Add more model choices
 
@@ -380,6 +383,8 @@ def run_experiment(max_epoch, model_id):
                                                  weight_decay=opt.weight_decay)
 
     # TODO: Scheduler worked better when base and max values were reversed. We should look into that
+    #   Maybe try base_lr of 0.001 with some other value for max_lr.
+    #   LRFinder could help us determine the optimal base_lr
     scheduler = scheduler_choices[opt.scheduler](optimizer=optimizer, base_lr=opt.base_lr, max_lr=opt.max_lr,
                                                  step_size_up=opt.step_size_up,
                                                  cycle_momentum=opt.cycle_momentum, mode=opt.scheduler_mode)
@@ -422,12 +427,12 @@ def run_experiment(max_epoch, model_id):
 
     # Test loading
     wb_run_eval = wandb.init(entity=opt.entity, project=opt.project_name, group=opt.group,
-                              # save_code=True, # Pycharm complains about duplicate code fragments
-                              job_type="eval",
-                              tags=['variable_epochs'],
-                              name=f'{model_id}_eval',
-                              config=opt,
-                              )
+                             # save_code=True, # Pycharm complains about duplicate code fragments
+                             job_type="eval",
+                             tags=['variable_epochs'],
+                             name=f'{model_id}_eval',
+                             config=opt,
+                             )
 
     model = model_choices[opt.model](depth=opt.depth, in_channels=opt.in_channels, out_channels=opt.out_channels,
                                      kernel_dim=opt.kernel_dim, mlp_dim=opt.mlp_dim, padding=opt.padding,
