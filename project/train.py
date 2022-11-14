@@ -3,6 +3,10 @@
 # TODO: Create argparser for all parameters that can be defined
 # TODO: Add parallelized training and logging for all experiments
 # TODO: Try out model that Bengio used in his paper
+# TODO: Check out some of the best modern practices for training NNs
+#  https://wandb.ai/site/articles/debugging-neural-networks-with-pytorch-and-w-b-using-gradients-and-visualizations
+#  https://wandb.ai/wandb-smle/integration_best_practices/reports/W-B-Integration-Best-Practices--VmlldzoyMzc5MTI2
+
 
 import argparse
 import os
@@ -44,9 +48,9 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
                                 'f1_macro': MulticlassF1Score(num_classes=opt.num_classes, average='macro'),
                                 'precision': MulticlassPrecision(num_classes=opt.num_classes),
                                 'recall': MulticlassRecall(num_classes=opt.num_classes),
-                                # 'auroc': MulticlassAUROC(num_classes=opt.num_classes), # Accepts probabilities
                                 }
                                ).to(opt.device)
+    auroc = MulticlassAUROC(num_classes=opt.num_classes, average='macro')
 
     start_time = timeit.default_timer()
     for i, (data, target) in enumerate(data_loader):
@@ -57,6 +61,7 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
         target = target.to(opt.device)
 
         metrics(pred, target)
+        auroc(probs, target)
 
         loss = F.nll_loss(probs, target)
         loss.backward()
@@ -72,7 +77,9 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
         global_probs = np.vstack((global_probs, probs))
 
         running_loss += loss.item() * data.size(0)
-        wandb.log({"lr": scheduler.get_last_lr()[0]})  # Commit=False just accumulates data
+        wandb.log({"lr": scheduler.get_last_lr()[0]},
+                  # commit=False, # Commit=False just accumulates data
+                  )
 
     # f1_score_macro = f1_score(global_pred, global_target, average='macro')
     # f1_score_micro = f1_score(global_pred, global_target, average='micro')
@@ -87,57 +94,83 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
     log_metrics = {
         **metrics.compute(),
         "epoch_training_loss": epoch_loss,
-        "epoch_time": epoch_time,
+        "epoch_training_time": epoch_time,
         # TODO: Check if the class names correspond to the right label numbers
         "confusion_matrix": wandb.plot.confusion_matrix(probs=global_probs, y_true=global_target,
                                                         class_names=['ellipse', 'square', 'triangle']),
         "roc": wandb.plot.roc_curve(y_true=global_target, y_probas=global_probs,
-                                    labels=['ellipse', 'square', 'triangle'])
+                                    labels=['ellipse', 'square', 'triangle']),
+        "auroc": auroc.compute()
     }
 
     wandb.log(log_metrics)
     return log_metrics
 
 
-# TODO: add argrapser opt parameter instead of specific parameters
-def validation(model, data_loader, loss_history=None, device='cpu'):
-    if loss_history is None:
-        loss_history = []
+def validation(model, data_loader, opt):
     model.eval()
 
     total_samples = len(data_loader.dataset)
-    correct_samples = 0
-    total_loss = 0
+    # correct_samples = 0
 
     global_target = np.array([])
     global_pred = np.array([])
+    global_probs = np.empty((0, 3))
 
+    running_loss = 0.0
+
+    metrics = MetricCollection({'f1_micro': MulticlassF1Score(num_classes=opt.num_classes, average='micro'),
+                                'f1_macro': MulticlassF1Score(num_classes=opt.num_classes, average='macro'),
+                                'precision': MulticlassPrecision(num_classes=opt.num_classes),
+                                'recall': MulticlassRecall(num_classes=opt.num_classes),
+                                }
+                               ).to(opt.device)
+    auroc = MulticlassAUROC(num_classes=opt.num_classes, average='macro')
+    start_time = timeit.default_timer()
     with torch.no_grad():
         for data, target in data_loader:
-            res = model(data.to(device))
-            res = res.to(device)
-            output = F.log_softmax(res, dim=1)
-            target = target.to(device)
-            output = output.to(device)
-            loss = F.nll_loss(output, target, reduction='sum')
-            _, pred = torch.max(output, dim=1)
+            res = model(data.to(opt.device))
+            probs = F.softmax(res, dim=1)
+            target = target.to(opt.device)
+            probs = probs.to(opt.device)
+            loss = F.nll_loss(probs, target, reduction='sum')
+            _, pred = torch.max(probs, dim=1)
 
-            total_loss += loss.item()
-            correct_samples += pred.eq(target).sum()
+            metrics(pred, target)
+            auroc(probs, target)
 
             target = target.cpu().detach().numpy()
             pred = pred.cpu().detach().numpy()
+            probs = probs.cpu().detach().numpy()
 
             global_target = np.concatenate((global_target, target))
             global_pred = np.concatenate((global_pred, pred))
+            global_probs = np.vstack((global_probs, probs))
 
-    avg_loss = total_loss / total_samples
-    acc = 100.0 * correct_samples / total_samples
-    loss_history.append(avg_loss)
+            running_loss += loss.item() * data.size(0)
 
-    f1 = f1_score(global_target, global_pred, average='macro')
-    print(f"Validation {acc=} {f1=}")
-    return acc
+    # TODO: Determine if there are 8000 examples (len(data_loader.dataset)) per epoch or 250 (len(data_loader))
+    epoch_loss = running_loss / total_samples
+
+    # TODO: change epoch_time from real time to execution time
+    epoch_time = timeit.default_timer() - start_time
+
+    # TODO: Wrongly classified images can also be logged with wandb
+    #  https://docs.wandb.ai/ref/python/log#image-from-numpy
+    log_metrics = {
+        **metrics.compute(),
+        "epoch_loss": epoch_loss,
+        "evaluation_time": epoch_time,
+        # TODO: Check if the class names correspond to the right label numbers
+        "confusion_matrix": wandb.plot.confusion_matrix(probs=global_probs, y_true=global_target,
+                                                        class_names=['ellipse', 'square', 'triangle']),
+        "roc": wandb.plot.roc_curve(y_true=global_target, y_probas=global_probs,
+                                    labels=['ellipse', 'square', 'triangle']),
+        "auroc": auroc.compute(),
+    }
+
+    wandb.log(log_metrics)
+    return log_metrics
 
 
 def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choices=None):
@@ -309,11 +342,13 @@ def run_experiment(epoch, model_id):
     if opt.step_size_up <= 0:
         opt.step_size_up = 2 * len(train_loader.dataset) // opt.batch_size
 
-    wb_run = wandb.init(entity=opt.entity, project=opt.project_name, group=opt.group, save_code=True,
+    wb_run = wandb.init(entity=opt.entity, project=opt.project_name, group=opt.group,
+                        # save_code=True, # Pycharm complains about duplicate code fragments
                         job_type="train",
                         tags=['variable_epochs'],
                         name=model_id,
-                        config=opt)
+                        config=opt,
+                        )
 
     # Define model
     model = model_choices[opt.model](depth=opt.depth, in_channels=opt.in_channels, out_channels=opt.out_channels,
@@ -326,6 +361,10 @@ def run_experiment(epoch, model_id):
     # TODO: Test SGD with momentum with parameters that look similar to this
     #  optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
     #  scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=0.01, max_lr=0.1)
+    # TODO: Test LRFinder
+    #  lr_finder = LRFinder(net, optimizer, device)
+    #  lr_finder.range_test(trainloader, end_lr=10, num_iter=100, logwandb=True)
+
     optimizer = optimizer_choices[opt.optimizer](model.parameters(), lr=opt.learning_rate,
                                                  weight_decay=opt.weight_decay)
 
@@ -334,23 +373,29 @@ def run_experiment(epoch, model_id):
                                                  step_size_up=opt.step_size_up,
                                                  cycle_momentum=opt.cycle_momentum, mode=opt.scheduler_mode)
 
-    best_model_acc = -np.Inf
+    # TODO: Check model gradients. Make sure gradients are not vanishing/exploding
+    #  wandb.watch(net, log='all')
+
+    best_model_f1_macro = -np.Inf
     best_model_path = None
     best_epoch = 0
-    for epoch in range(opt.n_epochs):
+    for epoch in range(1, opt.n_epochs + 1):
         print(f"{epoch=}")
         train(model=model, optimizer=optimizer, data_loader=train_loader, opt=opt,
               scheduler=scheduler)
-        val_acc = validation(model=model, data_loader=val_loader, device=opt.device)
+        metrics = validation(model=model, data_loader=val_loader, opt=opt)
         # TODO: Save both best model and last model for the experiment
         #  (ex. best was in epoch 16 but last was also saved in epoch 20)
-        if val_acc > best_model_acc:
-            print(f"Saving model with new best {val_acc=}")
-            best_model_acc, best_epoch = val_acc, epoch
+        if metrics['f1_macro'] > best_model_f1_macro:
+            print(f"Saving model with new best {metrics['f1_macro']=}")
+            best_model_f1_macro, best_epoch = metrics['f1_macro'], epoch
             Path(f'experiments/{opt.exp_name}').mkdir(exist_ok=True)
             new_best_path = os.path.join(f'experiments/{opt.exp_name}',
-                                         f'train-{opt.exp_name}-e{epoch}-metric{val_acc:.4f}.pt')
+                                         f'train-{opt.exp_name}-e{epoch}-metric{metrics["f1_macro"]:.4f}.pt')
             torch.save(model.state_dict(), new_best_path)
+            # TODO: Best model can also be saved in wandb
+            #  https://docs.wandb.ai/guides/models
+            #  https://docs.wandb.ai/ref/python/artifact
             if best_model_path:
                 os.remove(best_model_path)
             best_model_path = new_best_path

@@ -9,6 +9,7 @@ class CnnV1(nn.Module):
                  stride=1, max_pool=3, dropout=0.2, *args, **kwargs):
         super(CnnV1, self).__init__()
         # TODO: Save all params as attributes
+        # TODO: Initialize weights
         self.layers = nn.ModuleList([
             nn.Conv2d(in_channels, out_channels, kernel_dim, padding=padding, stride=stride),
             nn.ReLU(),
