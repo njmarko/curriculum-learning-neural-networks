@@ -8,6 +8,11 @@
 #  https://wandb.ai/wandb-smle/integration_best_practices/reports/W-B-Integration-Best-Practices--VmlldzoyMzc5MTI2
 # TODO: Fix error that appears at the start
 #  wandb: ERROR Failed to sample metric: Not Supported
+# TODO: Fix warning
+#  ....\project\venv\lib\site-packages\torchmetrics\utilities\prints.py:36:
+#  UserWarning: No positive samples in targets, true positive value should be meaningless.
+#  Returning zero tensor in true positive score
+#   warnings.warn(*args, **kwargs)
 
 import argparse
 import os
@@ -305,7 +310,7 @@ def create_experiments():
         pool.starmap(run_experiment, zip(epoch_ranges, model_ids))
 
 
-def run_experiment(epoch, model_id):
+def run_experiment(max_epoch, model_id):
     # Model options
     model_choices = {CnnV1.__name__.lower(): CnnV1, }  # TODO: Add more model choices
 
@@ -319,7 +324,7 @@ def run_experiment(epoch, model_id):
                                scheduler_choices=scheduler_choices)
     opt = parser.parse_args()
 
-    opt.n_epochs = epoch
+    opt.n_epochs = max_epoch
     print(f'{model_id} is training')
 
     # Add specific options for experiments
@@ -380,6 +385,7 @@ def run_experiment(epoch, model_id):
     best_model_f1_macro = -np.Inf
     best_model_path = None
     best_epoch = 0
+    artifact = wandb.Artifact(name=f'train-{opt.exp_name}-{model_id}-max_epochs{opt.n_epochs}', type='model')
     for epoch in range(1, opt.n_epochs + 1):
         print(f"{epoch=}")
         train(model=model, optimizer=optimizer, data_loader=train_loader, opt=opt,
@@ -392,7 +398,8 @@ def run_experiment(epoch, model_id):
             best_model_f1_macro, best_epoch = metrics['val_f1_macro'], epoch
             Path(f'experiments/{opt.exp_name}').mkdir(exist_ok=True)
             new_best_path = os.path.join(f'experiments/{opt.exp_name}',
-                                         f'train-{opt.exp_name}-e{epoch}-metric{metrics["val_f1_macro"]:.4f}.pt')
+                                         f'train-{opt.exp_name}-{model_id}-max_epochs{opt.n_epochs}-epoch{epoch}'
+                                         f'-metric{metrics["val_f1_macro"]:.4f}.pt')
             torch.save(model.state_dict(), new_best_path)
             # TODO: Best model can also be saved in wandb
             #  https://docs.wandb.ai/guides/models
@@ -401,7 +408,10 @@ def run_experiment(epoch, model_id):
                 os.remove(best_model_path)
             best_model_path = new_best_path
 
-        # TODO: Add early stopping - Maybe not needed for this experiment
+    artifact.add_file(best_model_path)
+    wb_run_train.log_artifact(artifact)
+
+    # TODO: Add early stopping - Maybe not needed for this experiment
     wb_run_train.finish()
 
     # Test loading
