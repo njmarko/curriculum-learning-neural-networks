@@ -198,6 +198,8 @@ def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choi
     parser.add_argument('-group', '--group', type=str, default="default_experiment",
                         help="Name of the experiment group. Each model in the experiment group will be logged "
                              "separately under a different type.")
+    parser.add_argument('-save_model_wandb', '--save_model_wandb', type=bool, default=True,
+                        help="Save best model to wandb run.")
 
     # Dataset options
     parser.add_argument('-d', '--dataset', type=str, default="data/generated_images/dataset3",
@@ -408,8 +410,9 @@ def run_experiment(max_epoch, model_id):
                 os.remove(best_model_path)
             best_model_path = new_best_path
 
-    artifact.add_file(best_model_path)
-    wb_run_train.log_artifact(artifact)
+    if opt.save_model_wandb:
+        artifact.add_file(best_model_path)
+        wb_run_train.log_artifact(artifact)
 
     # TODO: Add early stopping - Maybe not needed for this experiment
     wb_run_train.finish()
