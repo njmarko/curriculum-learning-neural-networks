@@ -2,6 +2,7 @@
 # TODO: Save models and results in experiments folder
 # TODO: Create argparser for all parameters that can be defined
 # TODO: Add parallelized training and logging for all experiments
+# TODO: Try out model that Bengio used in his paper
 
 import argparse
 import os
@@ -12,7 +13,9 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn.functional as F
-from sklearn.metrics import f1_score
+
+import wandb
+from sklearn.metrics import f1_score, confusion_matrix, recall_score, precision_score, roc_auc_score
 from torch import optim
 
 from data.data_loader import load_dataset
@@ -20,44 +23,80 @@ from models.cnn_v1 import CnnV1
 from itertools import repeat, cycle, islice
 import torch.multiprocessing as mp
 
+from torchmetrics.classification import MulticlassF1Score, MulticlassPrecision, MulticlassRecall, MulticlassAUROC, \
+    MulticlassConfusionMatrix
+from torchmetrics import MetricCollection
 
-# TODO: add argrapser opt parameter instead of specific parameters
-def train(model, optimizer, data_loader, loss_history=None, scheduler=None, device='cpu'):
-    if loss_history is None:
-        loss_history = []
+
+def train(model, optimizer, data_loader, opt, scheduler=None):
     model.train()
     total_samples = len(data_loader.dataset)
 
-    correct_samples = 0
+    global_target = np.array([])
+    global_pred = np.array([])
+    global_probs = np.empty((0, 3))
+
+    running_loss = 0.0
+
+    # correct_samples = 0
+
+    metrics = MetricCollection({'f1_micro': MulticlassF1Score(num_classes=opt.num_classes, average='micro'),
+                                'f1_macro': MulticlassF1Score(num_classes=opt.num_classes, average='macro'),
+                                'precision': MulticlassPrecision(num_classes=opt.num_classes),
+                                'recall': MulticlassRecall(num_classes=opt.num_classes),
+                                # 'auroc': MulticlassAUROC(num_classes=opt.num_classes), # Accepts probabilities
+                                }
+                               ).to(opt.device)
+
     start_time = timeit.default_timer()
     for i, (data, target) in enumerate(data_loader):
         optimizer.zero_grad()
-        predictions = model(data.to(device))
-        probs = F.log_softmax(predictions, dim=1)
-        probs, target = probs.to(device), target.to(device)
-
+        predictions = model(data.to(opt.device))
+        probs = F.softmax(predictions, dim=1)
         _, pred = torch.max(probs, dim=1)
+        target = target.to(opt.device)
+
+        metrics(pred, target)
 
         loss = F.nll_loss(probs, target)
         loss.backward()
         optimizer.step()
         scheduler.step()
 
-        correct_samples += pred.eq(target).sum()
+        # correct_samples += pred.eq(target).sum()
         target = target.cpu().detach().numpy()
         pred = pred.cpu().detach().numpy()
+        probs = probs.cpu().detach().numpy()
+        global_target = np.concatenate((global_target, target))
+        global_pred = np.concatenate((global_pred, pred))
+        global_probs = np.vstack((global_probs, probs))
 
-        f1_score_micro = f1_score(pred, target, average='macro')
+        running_loss += loss.item() * data.size(0)
+        wandb.log({"lr": scheduler.get_last_lr()[0]})  # Commit=False just accumulates data
 
-        if i % 100 == 0:
-            print(f"{f1_score_micro=}")
-            # TODO: Add wandb logging
+    # f1_score_macro = f1_score(global_pred, global_target, average='macro')
+    # f1_score_micro = f1_score(global_pred, global_target, average='micro')
+    # cm = confusion_matrix(global_target, global_pred)
 
-    print(f"Epoch time {timeit.default_timer() - start_time}")
+    # TODO: Determine if there are 8000 examples (len(data_loader.dataset)) per epoch or 250 (len(data_loader))
+    epoch_loss = running_loss / total_samples
 
-    acc = correct_samples / total_samples * 100
-    # TODO: Add wandb logging
-    return acc
+    # TODO: change epoch_time from real time to execution time
+    epoch_time = timeit.default_timer() - start_time
+    print(f"Epoch time {epoch_time}")
+    log_metrics = {
+        **metrics.compute(),
+        "epoch_training_loss": epoch_loss,
+        "epoch_time": epoch_time,
+        # TODO: Check if the class names correspond to the right label numbers
+        "confusion_matrix": wandb.plot.confusion_matrix(probs=global_probs, y_true=global_target,
+                                                        class_names=['ellipse', 'square', 'triangle']),
+        "roc": wandb.plot.roc_curve(y_true=global_target, y_probas=global_probs,
+                                    labels=['ellipse', 'square', 'triangle'])
+    }
+
+    wandb.log(log_metrics)
+    return log_metrics
 
 
 # TODO: add argrapser opt parameter instead of specific parameters
@@ -111,12 +150,27 @@ def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choi
         model_choices = {'cnnv1': CnnV1}
 
     parser = argparse.ArgumentParser()
+    # Wandb logging options
+    parser.add_argument('-entity', '--entity', type=str, default="weird-ai-yankovic",
+                        help="Name of the team. Multiple projects can exist for the same team.")
+    parser.add_argument('-project_name', '--project_name', type=str, default="curriculum_learning",
+                        help="Name of the project. Each experiment in the project will be logged separately"
+                             " as a group")
+    parser.add_argument('-group', '--group', type=str, default="default_experiment",
+                        help="Name of the experiment group. Each model in the experiment group will be logged "
+                             "separately under a different type.")
+
     # Dataset options
     parser.add_argument('-d', '--dataset', type=str, default="data/generated_images/dataset3",
                         help="Path to the dataset")
     parser.add_argument('-b', '--batch_size', type=int, default=32, help="Batch size")
     parser.add_argument('-shuffle', '--shuffle', type=bool, default=True, help="Shuffle dataset")
     parser.add_argument('-nw', '--num_workers', type=int, default=0, help="Number of workers to be used")
+    parser.add_argument('-nc', '--num_classes', type=int, default=3, help="Number of classes that can be detected")
+    parser.add_argument('-ts', '--training_split', type=float, default=0.8, help="Train split between 0 and 1")
+    parser.add_argument('-vs', '--validation_split', type=float, default=0.1, help="Validation split between 0 and 1")
+    parser.add_argument('-es', '--evaluation_split', type=float, default=0.1,
+                        help="Evaluation (test) split between 0 and 1")
 
     # Model options
     parser.add_argument('-m', '--model', type=str.lower, default=CnnV1.__name__,
@@ -127,7 +181,8 @@ def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choi
     parser.add_argument('-out_channels', '--out_channels', type=int, default=8, help="Number of out channels")
     parser.add_argument('-kernel_dim', '--kernel_dim', type=int, default=3,
                         help="Kernel dimension used by CNN models")
-    parser.add_argument('-mlp_dim', '--mlp_dim', type=int, default=16, help="Dimension of mlp at the end of the model")
+    parser.add_argument('-mlp_dim', '--mlp_dim', type=int, default=3,
+                        help="Dimension of mlp at the end of the model. Should be the same as the number of classes")
     parser.add_argument('-padding', '--padding', type=int, default=1, help="Padding used by CNN models")
     parser.add_argument('-stride', '--stride', type=int, default=1, help="Stride used by CNN models")
     parser.add_argument('-max_pool', '--max_pool', type=int, default=3, help="Max pool dimensions used by CNN models")
@@ -153,12 +208,12 @@ def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choi
     parser.add_argument('-sch', '--scheduler', type=str.lower, default='cycliclr',
                         choices=scheduler_choices.keys(),
                         help=f'Optimizer to be used {scheduler_choices.keys()}')
-    parser.add_argument('-base_lr', '--base_lr', type=float, default=0.001,
+    parser.add_argument('-base_lr', '--base_lr', type=float, default=3e-4,
                         help="Base learning rate for scheduler")
-    parser.add_argument('-max_lr', '--max_lr', type=float, default=3e-4,
+    parser.add_argument('-max_lr', '--max_lr', type=float, default=0.001,
                         help="Max learning rate for scheduler")
-    parser.add_argument('-step_size_up', '--step_size_up', type=int, default=5,
-                        help="CycleLR scheduler: step size up")
+    parser.add_argument('-step_size_up', '--step_size_up', type=int, default=0,
+                        help="CycleLR scheduler: step size up. If 0, then it is automatically calculated.")
     parser.add_argument('-cyc_mom', '--cycle_momentum', type=bool, default=False,
                         help="CyclicLR scheduler: cycle momentum in scheduler")
     parser.add_argument('-sch_m', '--scheduler_mode', type=str, default="triangular2",
@@ -189,6 +244,11 @@ def get_chunked_lists(opt):
     epoch_splits = [epoch_ranges[i:i + chunk] for i in range(0, len(epoch_ranges), chunk)]
     model_id_splits = [model_ids[i:i + chunk] for i in range(0, len(model_ids), chunk)]
     return epoch_splits, model_id_splits
+
+
+def pass_right_constructor_arguments(target_class, opt):
+    # TODO: Create an instance of a class by sending only the arguments that exist in the constructor
+    pass
 
 
 def create_experiments():
@@ -235,7 +295,25 @@ def run_experiment(epoch, model_id):
     if opt.device == 'cuda':
         print(f'GPU {torch.cuda.get_device_name(0)}')
 
-    # TODO: Log arg options in wandb
+    # TODO: Determine if we need to fix the seed for every dataset
+    # TODO: Determine how random split is created. Maybe make sure that it always takes a certain percentage of
+    #  easy, medium and hard examples
+    # TODO: Decide if pin_memory is worth it
+    train_loader, val_loader, test_loader = load_dataset(base_dir=opt.dataset, batch_size=opt.batch_size,
+                                                         lengths=[opt.training_split, opt.validation_split,
+                                                                  opt.evaluation_split],
+                                                         shuffle=opt.shuffle, num_workers=opt.num_workers,
+                                                         pin_memory=False)
+
+    # TODO: Determine optimal step_size_up for cyclicLR scheduler.
+    if opt.step_size_up <= 0:
+        opt.step_size_up = 2 * len(train_loader.dataset) // opt.batch_size
+
+    wb_run = wandb.init(entity=opt.entity, project=opt.project_name, group=opt.group, save_code=True,
+                        job_type="train",
+                        tags=['variable_epochs'],
+                        name=model_id,
+                        config=opt)
 
     # Define model
     model = model_choices[opt.model](depth=opt.depth, in_channels=opt.in_channels, out_channels=opt.out_channels,
@@ -243,34 +321,27 @@ def run_experiment(epoch, model_id):
                                      stride=opt.stride, max_pool=opt.max_pool,
                                      dropout=opt.dropout)
 
+    model = model.to(opt.device)
+
     # TODO: Test SGD with momentum with parameters that look similar to this
     #  optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
     #  scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=0.01, max_lr=0.1)
-
     optimizer = optimizer_choices[opt.optimizer](model.parameters(), lr=opt.learning_rate,
                                                  weight_decay=opt.weight_decay)
 
+    # TODO: Scheduler worked better when base and max values were reversed. We should look into that
     scheduler = scheduler_choices[opt.scheduler](optimizer=optimizer, base_lr=opt.base_lr, max_lr=opt.max_lr,
                                                  step_size_up=opt.step_size_up,
                                                  cycle_momentum=opt.cycle_momentum, mode=opt.scheduler_mode)
-
-    model = model.to(opt.device)
-
-    # TODO: Determine if we need to fix the seed for every dataset
-    # TODO: Determine how random split is created. Maybe make sure that it always takes a certain percentage of
-    #  easy, medium and hard examples
-    # TODO: Decide if pin_memory is worth it
-    train_loader, val_loader = load_dataset(base_dir=opt.dataset, batch_size=opt.batch_size,
-                                            shuffle=opt.shuffle, num_workers=opt.num_workers, pin_memory=False)
 
     best_model_acc = -np.Inf
     best_model_path = None
     best_epoch = 0
     for epoch in range(opt.n_epochs):
         print(f"{epoch=}")
-        train(model=model, optimizer=optimizer, data_loader=train_loader, device=opt.device, scheduler=scheduler)
+        train(model=model, optimizer=optimizer, data_loader=train_loader, opt=opt,
+              scheduler=scheduler)
         val_acc = validation(model=model, data_loader=val_loader, device=opt.device)
-
         # TODO: Save both best model and last model for the experiment
         #  (ex. best was in epoch 16 but last was also saved in epoch 20)
         if val_acc > best_model_acc:
@@ -297,6 +368,8 @@ def run_experiment(epoch, model_id):
     #                                         shuffle=opt.shuffle, num_workers=opt.num_workers)
     # res = validation(model=model, data_loader=val_loader, device=device)
     # print(res)
+
+    wb_run.finish()
 
 
 def main():
