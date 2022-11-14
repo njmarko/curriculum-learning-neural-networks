@@ -48,6 +48,7 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
 
     running_loss = 0.0
 
+    # TODO: Training time jumped to 10 seconds from 7. Determine if metrics are affecting it or wandb logging.
     metrics = MetricCollection({'train_f1_micro': MulticlassF1Score(num_classes=opt.num_classes, average='micro'),
                                 'train_f1_macro': MulticlassF1Score(num_classes=opt.num_classes, average='macro'),
                                 'train_precision': MulticlassPrecision(num_classes=opt.num_classes),
@@ -83,6 +84,8 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
         global_probs = np.vstack((global_probs, probs))
 
         running_loss += loss.item() * data.size(0)
+
+        # TODO: Check if this affects performance
         wandb.log({"train_lr": scheduler.get_last_lr()[0]},
                   # commit=False, # Commit=False just accumulates data
                   )
@@ -354,7 +357,7 @@ def run_experiment(max_epoch, model_id):
                               # save_code=True, # Pycharm complains about duplicate code fragments
                               job_type="train",
                               tags=['variable_epochs'],
-                              name=model_id,
+                              name=f'{model_id}_train',
                               config=opt,
                               )
 
@@ -418,16 +421,28 @@ def run_experiment(max_epoch, model_id):
     wb_run_train.finish()
 
     # Test loading
-    # model = CnnV1()
-    # model.load_state_dict(torch.load("experiments/default_experiment/train-default_experiment-3-acc54.55000305175781"))
-    # model.to(device)
-    # model.eval()
+    wb_run_eval = wandb.init(entity=opt.entity, project=opt.project_name, group=opt.group,
+                              # save_code=True, # Pycharm complains about duplicate code fragments
+                              job_type="eval",
+                              tags=['variable_epochs'],
+                              name=f'{model_id}_eval',
+                              config=opt,
+                              )
+
+    model = model_choices[opt.model](depth=opt.depth, in_channels=opt.in_channels, out_channels=opt.out_channels,
+                                     kernel_dim=opt.kernel_dim, mlp_dim=opt.mlp_dim, padding=opt.padding,
+                                     stride=opt.stride, max_pool=opt.max_pool,
+                                     dropout=opt.dropout)
+    model.load_state_dict(torch.load(best_model_path))
+    model.to(opt.device)
+
+    # TODO: Create a new helper function that returns the number of model parameters
+    # TODO: Also save number of parameters for the model in the wandb config
     # pytorch_total_params = sum(p.numel() for p in model.parameters())
     # print(pytorch_total_params)
-    # train_loader, val_loader = load_dataset(base_dir=opt.dataset, batch_size=opt.batch_size,
-    #                                         shuffle=opt.shuffle, num_workers=opt.num_workers)
-    # res = validation(model=model, data_loader=val_loader, device=device)
-    # print(res)
+    res = validation(model=model, data_loader=test_loader, opt=opt)
+    print(f"TEST FINISHED {res}")
+    wb_run_eval.finish()
 
 
 def main():
