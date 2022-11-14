@@ -6,7 +6,8 @@
 # TODO: Check out some of the best modern practices for training NNs
 #  https://wandb.ai/site/articles/debugging-neural-networks-with-pytorch-and-w-b-using-gradients-and-visualizations
 #  https://wandb.ai/wandb-smle/integration_best_practices/reports/W-B-Integration-Best-Practices--VmlldzoyMzc5MTI2
-
+# TODO: Fix error that appears at the start
+#  wandb: ERROR Failed to sample metric: Not Supported
 
 import argparse
 import os
@@ -42,18 +43,19 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
 
     running_loss = 0.0
 
-    # correct_samples = 0
-
-    metrics = MetricCollection({'f1_micro': MulticlassF1Score(num_classes=opt.num_classes, average='micro'),
-                                'f1_macro': MulticlassF1Score(num_classes=opt.num_classes, average='macro'),
-                                'precision': MulticlassPrecision(num_classes=opt.num_classes),
-                                'recall': MulticlassRecall(num_classes=opt.num_classes),
+    metrics = MetricCollection({'train_f1_micro': MulticlassF1Score(num_classes=opt.num_classes, average='micro'),
+                                'train_f1_macro': MulticlassF1Score(num_classes=opt.num_classes, average='macro'),
+                                'train_precision': MulticlassPrecision(num_classes=opt.num_classes),
+                                'train_recall': MulticlassRecall(num_classes=opt.num_classes),
                                 }
                                ).to(opt.device)
     auroc = MulticlassAUROC(num_classes=opt.num_classes, average='macro')
 
     start_time = timeit.default_timer()
     for i, (data, target) in enumerate(data_loader):
+        # TODO: Do one sanity check for images in a batch
+        #  https://www.kaggle.com/code/ayuraj/experiment-tracking-with-weights-and-biases?scriptVersionId=63334832&cellId=18
+
         optimizer.zero_grad()
         predictions = model(data.to(opt.device))
         probs = F.softmax(predictions, dim=1)
@@ -68,7 +70,6 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
         optimizer.step()
         scheduler.step()
 
-        # correct_samples += pred.eq(target).sum()
         target = target.cpu().detach().numpy()
         pred = pred.cpu().detach().numpy()
         probs = probs.cpu().detach().numpy()
@@ -77,13 +78,9 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
         global_probs = np.vstack((global_probs, probs))
 
         running_loss += loss.item() * data.size(0)
-        wandb.log({"lr": scheduler.get_last_lr()[0]},
+        wandb.log({"train_lr": scheduler.get_last_lr()[0]},
                   # commit=False, # Commit=False just accumulates data
                   )
-
-    # f1_score_macro = f1_score(global_pred, global_target, average='macro')
-    # f1_score_micro = f1_score(global_pred, global_target, average='micro')
-    # cm = confusion_matrix(global_target, global_pred)
 
     # TODO: Determine if there are 8000 examples (len(data_loader.dataset)) per epoch or 250 (len(data_loader))
     epoch_loss = running_loss / total_samples
@@ -93,14 +90,16 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
     print(f"Epoch time {epoch_time}")
     log_metrics = {
         **metrics.compute(),
-        "epoch_training_loss": epoch_loss,
-        "epoch_training_time": epoch_time,
+        "train_epoch_loss": epoch_loss,
+        "train_epoch_time": epoch_time,
         # TODO: Check if the class names correspond to the right label numbers
-        "confusion_matrix": wandb.plot.confusion_matrix(probs=global_probs, y_true=global_target,
-                                                        class_names=['ellipse', 'square', 'triangle']),
-        "roc": wandb.plot.roc_curve(y_true=global_target, y_probas=global_probs,
-                                    labels=['ellipse', 'square', 'triangle']),
-        "auroc": auroc.compute()
+        "train_confusion_matrix": wandb.plot.confusion_matrix(probs=global_probs, y_true=global_target,
+                                                              class_names=['ellipse', 'square', 'triangle'],
+                                                              title="Train confusion matrix"),
+        "train_roc": wandb.plot.roc_curve(y_true=global_target, y_probas=global_probs,
+                                          labels=['ellipse', 'square', 'triangle'],
+                                          title="Train ROC", ),
+        "train_auroc_macro": auroc.compute()
     }
 
     wandb.log(log_metrics)
@@ -119,10 +118,10 @@ def validation(model, data_loader, opt):
 
     running_loss = 0.0
 
-    metrics = MetricCollection({'f1_micro': MulticlassF1Score(num_classes=opt.num_classes, average='micro'),
-                                'f1_macro': MulticlassF1Score(num_classes=opt.num_classes, average='macro'),
-                                'precision': MulticlassPrecision(num_classes=opt.num_classes),
-                                'recall': MulticlassRecall(num_classes=opt.num_classes),
+    metrics = MetricCollection({'val_f1_micro': MulticlassF1Score(num_classes=opt.num_classes, average='micro'),
+                                'val_f1_macro': MulticlassF1Score(num_classes=opt.num_classes, average='macro'),
+                                'val_precision': MulticlassPrecision(num_classes=opt.num_classes),
+                                'val_recall': MulticlassRecall(num_classes=opt.num_classes),
                                 }
                                ).to(opt.device)
     auroc = MulticlassAUROC(num_classes=opt.num_classes, average='macro')
@@ -159,14 +158,16 @@ def validation(model, data_loader, opt):
     #  https://docs.wandb.ai/ref/python/log#image-from-numpy
     log_metrics = {
         **metrics.compute(),
-        "epoch_loss": epoch_loss,
-        "evaluation_time": epoch_time,
+        "val_epoch_loss": epoch_loss,
+        "val_evaluation_time": epoch_time,
         # TODO: Check if the class names correspond to the right label numbers
-        "confusion_matrix": wandb.plot.confusion_matrix(probs=global_probs, y_true=global_target,
-                                                        class_names=['ellipse', 'square', 'triangle']),
-        "roc": wandb.plot.roc_curve(y_true=global_target, y_probas=global_probs,
-                                    labels=['ellipse', 'square', 'triangle']),
-        "auroc": auroc.compute(),
+        "val_confusion_matrix": wandb.plot.confusion_matrix(probs=global_probs, y_true=global_target,
+                                                            class_names=['ellipse', 'square', 'triangle'],
+                                                            title="Validation confusion matrix"),
+        "val_roc": wandb.plot.roc_curve(y_true=global_target, y_probas=global_probs,
+                                        labels=['ellipse', 'square', 'triangle'],
+                                        title="Validation ROC", ),
+        "val_auroc_macro": auroc.compute(),
     }
 
     wandb.log(log_metrics)
@@ -342,13 +343,13 @@ def run_experiment(epoch, model_id):
     if opt.step_size_up <= 0:
         opt.step_size_up = 2 * len(train_loader.dataset) // opt.batch_size
 
-    wb_run = wandb.init(entity=opt.entity, project=opt.project_name, group=opt.group,
-                        # save_code=True, # Pycharm complains about duplicate code fragments
-                        job_type="train",
-                        tags=['variable_epochs'],
-                        name=model_id,
-                        config=opt,
-                        )
+    wb_run_train = wandb.init(entity=opt.entity, project=opt.project_name, group=opt.group,
+                              # save_code=True, # Pycharm complains about duplicate code fragments
+                              job_type="train",
+                              tags=['variable_epochs'],
+                              name=model_id,
+                              config=opt,
+                              )
 
     # Define model
     model = model_choices[opt.model](depth=opt.depth, in_channels=opt.in_channels, out_channels=opt.out_channels,
@@ -386,12 +387,12 @@ def run_experiment(epoch, model_id):
         metrics = validation(model=model, data_loader=val_loader, opt=opt)
         # TODO: Save both best model and last model for the experiment
         #  (ex. best was in epoch 16 but last was also saved in epoch 20)
-        if metrics['f1_macro'] > best_model_f1_macro:
-            print(f"Saving model with new best {metrics['f1_macro']=}")
-            best_model_f1_macro, best_epoch = metrics['f1_macro'], epoch
+        if metrics['val_f1_macro'] > best_model_f1_macro:
+            print(f"Saving model with new best {metrics['val_f1_macro']=}")
+            best_model_f1_macro, best_epoch = metrics['val_f1_macro'], epoch
             Path(f'experiments/{opt.exp_name}').mkdir(exist_ok=True)
             new_best_path = os.path.join(f'experiments/{opt.exp_name}',
-                                         f'train-{opt.exp_name}-e{epoch}-metric{metrics["f1_macro"]:.4f}.pt')
+                                         f'train-{opt.exp_name}-e{epoch}-metric{metrics["val_f1_macro"]:.4f}.pt')
             torch.save(model.state_dict(), new_best_path)
             # TODO: Best model can also be saved in wandb
             #  https://docs.wandb.ai/guides/models
@@ -401,6 +402,7 @@ def run_experiment(epoch, model_id):
             best_model_path = new_best_path
 
         # TODO: Add early stopping - Maybe not needed for this experiment
+    wb_run_train.finish()
 
     # Test loading
     # model = CnnV1()
@@ -413,8 +415,6 @@ def run_experiment(epoch, model_id):
     #                                         shuffle=opt.shuffle, num_workers=opt.num_workers)
     # res = validation(model=model, data_loader=val_loader, device=device)
     # print(res)
-
-    wb_run.finish()
 
 
 def main():
