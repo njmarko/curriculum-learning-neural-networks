@@ -19,6 +19,7 @@
 #  https://www.kaggle.com/code/ayuraj/experiment-tracking-with-weights-and-biases?scriptVersionId=63334832&cellId=18
 import argparse
 import os
+import random
 import time
 import timeit
 from pathlib import Path
@@ -241,6 +242,7 @@ def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choi
     parser.add_argument('-nm', '--n_models', type=int, default=50, help="Number of models to be trained")
     parser.add_argument('-pp', '--parallel_processes', type=int, default=0,
                         help="Number of parallel processes to spawn for models [0 for all available cores]")
+    parser.add_argument('-seed', '--seed', type=int, default=-1, help="Set random seed")
 
     # Optimizer options
     parser.add_argument('-optim', '--optimizer', type=str.lower, default="adamw",
@@ -291,6 +293,18 @@ def get_chunked_lists(opt):
     return epoch_splits, model_id_splits
 
 
+# 2. Set the random seeds
+
+def set_seed(seed_num):
+    os.environ['PYTHONHASHSEED'] = str(seed_num)
+    random.seed(seed_num)
+    np.random.seed(seed_num)
+    torch.manual_seed(seed_num)
+    torch.cuda.manual_seed(seed_num)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
 def pass_right_constructor_arguments(target_class, opt):
     # TODO: Create an instance of a class by sending only the arguments that exist in the constructor
     pass
@@ -325,6 +339,9 @@ def run_experiment(max_epoch, model_id):
     parser = create_arg_parser(model_choices=model_choices, optimizer_choices=optimizer_choices,
                                scheduler_choices=scheduler_choices)
     opt = parser.parse_args()
+
+    if opt.seed >= 0:
+        set_seed(opt.seed)
 
     opt.n_epochs = max_epoch
     print(f'{model_id} is training')
