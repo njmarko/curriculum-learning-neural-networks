@@ -15,13 +15,15 @@
 #   warnings.warn(*args, **kwargs)
 # TODO: Check why ROC curve displays class 0 as a straight line
 # TODO: Consider changing x axis to epochs in wandb
-
+# TODO: Useful resource for wandb
+#  https://www.kaggle.com/code/ayuraj/experiment-tracking-with-weights-and-biases?scriptVersionId=63334832&cellId=18
 import argparse
 import os
 import time
 import timeit
 from pathlib import Path
 
+import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -38,6 +40,19 @@ import torch.multiprocessing as mp
 from torchmetrics.classification import MulticlassF1Score, MulticlassPrecision, MulticlassRecall, MulticlassAUROC, \
     MulticlassConfusionMatrix
 from torchmetrics import MetricCollection
+import matplotlib.pyplot as plt
+
+
+def show_batch(image_batch, label_batch):
+    plt.figure(figsize=(20, 20))
+    for n in range(25):
+        ax = plt.subplot(5, 5, n + 1)
+        img = image_batch[n]
+        plt.imshow(cv2.cvtColor(img.squeeze().numpy(), cv2.COLOR_GRAY2RGB))
+        label = label_batch[n].numpy()
+        plt.title(label)
+        plt.axis('off')
+    plt.show()
 
 
 def train(model, optimizer, data_loader, opt, scheduler=None):
@@ -60,9 +75,6 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
 
     start_time = timeit.default_timer()
     for i, (data, target) in enumerate(data_loader):
-        # TODO: Do one sanity check for images in a batch
-        #  https://www.kaggle.com/code/ayuraj/experiment-tracking-with-weights-and-biases?scriptVersionId=63334832&cellId=18
-
         optimizer.zero_grad()
         predictions = model(data.to(opt.device))
         probs = F.softmax(predictions, dim=1)
@@ -98,12 +110,13 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
         **metrics.compute(),
         "train_epoch_loss": epoch_loss,
         "train_epoch_time": epoch_time,
-        # TODO: Check if the class names correspond to the right label numbers
         "train_confusion_matrix": wandb.plot.confusion_matrix(probs=global_probs, y_true=global_target,
                                                               class_names=['ellipse', 'square', 'triangle'],
                                                               title="Train confusion matrix"),
         "train_roc": wandb.plot.roc_curve(y_true=global_target, y_probas=global_probs,
                                           labels=['ellipse', 'square', 'triangle'],
+                                          # TODO: Deterimn why classes_to_plot doesn't work with roc
+                                          # classes_to_plot=['ellipse', 'square', 'triangle'],
                                           title="Train ROC", ),
         "train_auroc_macro": auroc.compute()
     }
@@ -160,12 +173,12 @@ def validation(model, data_loader, opt):
         **metrics.compute(),
         "val_epoch_loss": epoch_loss,
         "val_evaluation_time": epoch_time,
-        # TODO: Check if the class names correspond to the right label numbers
         "val_confusion_matrix": wandb.plot.confusion_matrix(probs=global_probs, y_true=global_target,
                                                             class_names=['ellipse', 'square', 'triangle'],
                                                             title="Validation confusion matrix"),
         "val_roc": wandb.plot.roc_curve(y_true=global_target, y_probas=global_probs,
                                         labels=['ellipse', 'square', 'triangle'],
+                                        # classes_to_plot=['ellipse', 'square', 'triangle'],
                                         title="Validation ROC", ),
         "val_auroc_macro": auroc.compute(),
     }
