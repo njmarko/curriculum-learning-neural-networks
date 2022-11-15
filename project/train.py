@@ -115,7 +115,7 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
                                                               title="Train confusion matrix"),
         "train_roc": wandb.plot.roc_curve(y_true=global_target, y_probas=global_probs,
                                           labels=['ellipse', 'square', 'triangle'],
-                                          # TODO: Deterimn why classes_to_plot doesn't work with roc
+                                          # TODO: Determine why classes_to_plot doesn't work with roc
                                           # classes_to_plot=['ellipse', 'square', 'triangle'],
                                           title="Train ROC", ),
         "train_auroc_macro": auroc.compute()
@@ -238,8 +238,6 @@ def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choi
     # Training options
     parser.add_argument('-device', '--device', type=str, default='cuda', help="Device to be used")
     parser.add_argument('-e', '--n_epochs', type=int, default=20, help="Number of epochs")
-    parser.add_argument('-exp_name', '--exp_name', type=str, default="default_experiment",
-                        help="Name of the experiment")
     parser.add_argument('-nm', '--n_models', type=int, default=50, help="Number of models to be trained")
     parser.add_argument('-pp', '--parallel_processes', type=int, default=0,
                         help="Number of parallel processes to spawn for models [0 for all available cores]")
@@ -299,20 +297,14 @@ def pass_right_constructor_arguments(target_class, opt):
 
 
 def create_experiments():
-    # TODO: Run Experiments in parallel
     # TODO: Pass specific options for each experiment
-    # TODO: Determine if it is better to create all processes at the start, where each process goes through the slice
-    #  of list of all epochs, or create them for each experiment where each experiment takes only one epoch value
 
     parser = create_arg_parser()
     opt = parser.parse_args()
 
     model_ids = [f'model_{i}' for i in range(opt.n_models)]
-    epochs = [e for e in range(10, opt.n_epochs)]
-    # TODO: Find a way to slice the epochs if number of models is lower than number of epochs.
-    #  In that case, maybe every second or third epoch should be tested
-    epoch_ranges = list(islice(cycle(epochs), opt.n_models))
-    print(len(epoch_ranges))
+
+    epoch_ranges = torch.linspace(10, opt.n_epochs - 1, 4).long()
 
     with mp.Pool(opt.parallel_processes) as pool:
         pool.starmap(run_experiment, zip(epoch_ranges, model_ids))
@@ -397,7 +389,7 @@ def run_experiment(max_epoch, model_id):
     best_model_f1_macro = -np.Inf
     best_model_path = None
     best_epoch = 0
-    artifact = wandb.Artifact(name=f'train-{opt.exp_name}-{model_id}-max_epochs{opt.n_epochs}', type='model')
+    artifact = wandb.Artifact(name=f'train-{opt.group}-{model_id}-max_epochs{opt.n_epochs}', type='model')
     for epoch in range(1, opt.n_epochs + 1):
         print(f"{epoch=}")
         train_metrics = train(model=model, optimizer=optimizer, data_loader=train_loader, opt=opt,
@@ -418,9 +410,9 @@ def run_experiment(max_epoch, model_id):
         if val_metrics['val_f1_macro'] > best_model_f1_macro:
             print(f"Saving model with new best {val_metrics['val_f1_macro']=}")
             best_model_f1_macro, best_epoch = val_metrics['val_f1_macro'], epoch
-            Path(f'experiments/{opt.exp_name}').mkdir(exist_ok=True)
-            new_best_path = os.path.join(f'experiments/{opt.exp_name}',
-                                         f'train-{opt.exp_name}-{model_id}-max_epochs{opt.n_epochs}-epoch{epoch}'
+            Path(f'experiments/{opt.group}').mkdir(exist_ok=True)
+            new_best_path = os.path.join(f'experiments/{opt.group}',
+                                         f'train-{opt.group}-{model_id}-max_epochs{opt.n_epochs}-epoch{epoch}'
                                          f'-metric{val_metrics["val_f1_macro"]:.4f}.pt')
             torch.save(model.state_dict(), new_best_path)
             # TODO: Best model can also be saved in wandb
@@ -449,6 +441,7 @@ def run_experiment(max_epoch, model_id):
                                      kernel_dim=opt.kernel_dim, mlp_dim=opt.mlp_dim, padding=opt.padding,
                                      stride=opt.stride, max_pool=opt.max_pool,
                                      dropout=opt.dropout)
+    # TODO: Load model from wandb for the current run
     model.load_state_dict(torch.load(best_model_path))
     model.to(opt.device)
 
