@@ -219,6 +219,7 @@ def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choi
     parser.add_argument('-vs', '--validation_split', type=float, default=0.1, help="Validation split between 0 and 1")
     parser.add_argument('-es', '--evaluation_split', type=float, default=0.1,
                         help="Evaluation (test) split between 0 and 1")
+    parser.add_argument('-seed_dataset', '--seed_dataset', type=int, default=-1, help="Set random seed for dataset")
 
     # Model options
     parser.add_argument('-m', '--model', type=str.lower, default=CnnV1.__name__,
@@ -242,7 +243,8 @@ def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choi
     parser.add_argument('-nm', '--n_models', type=int, default=50, help="Number of models to be trained")
     parser.add_argument('-pp', '--parallel_processes', type=int, default=0,
                         help="Number of parallel processes to spawn for models [0 for all available cores]")
-    parser.add_argument('-seed', '--seed', type=int, default=-1, help="Set random seed")
+    parser.add_argument('-seed_everything', '--seed_everything', type=int, default=-1,
+                        help="Set random seed for everything")
 
     # Optimizer options
     parser.add_argument('-optim', '--optimizer', type=str.lower, default="adamw",
@@ -318,7 +320,7 @@ def create_experiments():
 
     model_ids = [f'model_{i}' for i in range(opt.n_models)]
 
-    epoch_ranges = torch.linspace(10, opt.n_epochs - 1, 4).long()
+    epoch_ranges = torch.linspace(10, opt.n_epochs - 1, opt.n_models).long()
 
     with mp.Pool(opt.parallel_processes) as pool:
         pool.starmap(run_experiment, zip(epoch_ranges, model_ids))
@@ -340,8 +342,9 @@ def run_experiment(max_epoch, model_id):
                                scheduler_choices=scheduler_choices)
     opt = parser.parse_args()
 
-    if opt.seed >= 0:
-        set_seed(opt.seed)
+    if opt.seed_everything >= 0:
+        opt.seed_dataset = opt.seed_everything
+        set_seed(opt.seed_everything)
 
     opt.n_epochs = max_epoch
     print(f'{model_id} is training')
@@ -353,15 +356,13 @@ def run_experiment(max_epoch, model_id):
     if opt.device == 'cuda':
         print(f'GPU {torch.cuda.get_device_name(0)}')
 
-    # TODO: Determine if we need to fix the seed for every dataset
-    # TODO: Determine how random split is created. Maybe make sure that it always takes a certain percentage of
-    #  easy, medium and hard examples
-    # TODO: Decide if pin_memory is worth it
     train_loader, val_loader, test_loader = load_dataset(base_dir=opt.dataset, batch_size=opt.batch_size,
                                                          lengths=[opt.training_split, opt.validation_split,
                                                                   opt.evaluation_split],
                                                          shuffle=opt.shuffle, num_workers=opt.num_workers,
-                                                         pin_memory=False)
+                                                         pin_memory=False,
+                                                         seed=opt.seed_dataset
+                                                         )
 
     # TODO: Determine optimal step_size_up for cyclicLR scheduler.
     if opt.step_size_up <= 0:

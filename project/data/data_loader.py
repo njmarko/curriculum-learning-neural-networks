@@ -15,7 +15,7 @@ def seed_worker(worker_id):
     random.seed(worker_seed)
 
 
-def load_dataset(base_dir, lengths=None, batch_size=64, shuffle=True, num_workers=4, pin_memory=False, seed=None):
+def load_dataset(base_dir, lengths=None, batch_size=64, shuffle=True, num_workers=4, pin_memory=False, seed=-1):
     if lengths is None:
         lengths = [0.8, 0.2]
     transform = transforms.Compose([
@@ -23,7 +23,7 @@ def load_dataset(base_dir, lengths=None, batch_size=64, shuffle=True, num_worker
         transforms.ToTensor(),
     ])
     generator = torch.Generator()
-    if seed:
+    if seed >= 0:
         generator = generator.manual_seed(seed)
     dataset = ImageFolder(root=base_dir, transform=transform)
     data_splits = random_split(dataset, lengths, generator=generator)
