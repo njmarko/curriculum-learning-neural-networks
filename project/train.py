@@ -60,9 +60,9 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
     model.train()
     total_samples = len(data_loader.dataset)
 
-    global_target = np.array([])
-    global_pred = np.array([])
-    global_probs = np.empty((0, 3))
+    global_target = torch.tensor([], device=opt.device)
+    global_pred = torch.tensor([], device=opt.device)
+    global_probs = torch.empty((0, 3), device=opt.device)
 
     running_loss = 0.0
 
@@ -71,8 +71,8 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
                                 'train_precision': MulticlassPrecision(num_classes=opt.num_classes),
                                 'train_recall': MulticlassRecall(num_classes=opt.num_classes),
                                 }
-                               )
-    auroc = MulticlassAUROC(num_classes=opt.num_classes, average='macro')
+                               ).to(opt.device)
+    auroc = MulticlassAUROC(num_classes=opt.num_classes, average='macro').to(opt.device)
 
     start_time = timeit.default_timer()
     for i, (data, target) in enumerate(data_loader):
@@ -87,14 +87,10 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
         optimizer.step()
         scheduler.step()
 
-        target = target.cpu().detach()
-        pred = pred.cpu().detach()
-        probs = probs.cpu().detach()
         metrics(pred, target)
-        auroc(probs, target)
-        global_target = np.concatenate((global_target, target.numpy()))
-        global_pred = np.concatenate((global_pred, pred.numpy()))
-        global_probs = np.vstack((global_probs, probs.numpy()))
+        global_target = torch.concatenate((global_target, target))
+        global_pred = torch.concatenate((global_pred, pred))
+        global_probs = torch.vstack((global_probs, probs))
 
         running_loss += loss.item() * data.size(0)
 
@@ -107,6 +103,11 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
 
     epoch_time = timeit.default_timer() - start_time
     print(f"Epoch time {epoch_time}")
+
+    auroc(global_probs, global_target.long())
+    global_target = global_target.cpu().detach().numpy()
+    global_pred = global_pred.cpu().detach().numpy()
+    global_probs = global_probs.cpu().detach().numpy()
     log_metrics = {
         **metrics.compute(),
         "train_epoch_loss": epoch_loss,
@@ -128,11 +129,10 @@ def validation(model, data_loader, opt):
     model.eval()
 
     total_samples = len(data_loader.dataset)
-    # correct_samples = 0
 
-    global_target = np.array([])
-    global_pred = np.array([])
-    global_probs = np.empty((0, 3))
+    global_target = torch.tensor([], device=opt.device)
+    global_pred = torch.tensor([], device=opt.device)
+    global_probs = torch.empty((0, 3), device=opt.device)
 
     running_loss = 0.0
 
@@ -141,8 +141,8 @@ def validation(model, data_loader, opt):
                                 'val_precision': MulticlassPrecision(num_classes=opt.num_classes),
                                 'val_recall': MulticlassRecall(num_classes=opt.num_classes),
                                 }
-                               )
-    auroc = MulticlassAUROC(num_classes=opt.num_classes, average='macro')
+                               ).to(opt.device)
+    auroc = MulticlassAUROC(num_classes=opt.num_classes, average='macro').to(opt.device)
     start_time = timeit.default_timer()
     with torch.no_grad():
         for data, target in data_loader:
@@ -153,20 +153,21 @@ def validation(model, data_loader, opt):
             loss = F.nll_loss(probs, target, reduction='sum')
             _, pred = torch.max(probs, dim=1)
 
-            target = target.cpu().detach()
-            pred = pred.cpu().detach()
-            probs = probs.cpu().detach()
             metrics(pred, target)
-            auroc(probs, target)
-            global_target = np.concatenate((global_target, target.numpy()))
-            global_pred = np.concatenate((global_pred, pred.numpy()))
-            global_probs = np.vstack((global_probs, probs.numpy()))
+            global_target = torch.concatenate((global_target, target))
+            global_pred = torch.concatenate((global_pred, pred))
+            global_probs = torch.vstack((global_probs, probs))
 
             running_loss += loss.item() * data.size(0)
 
     epoch_loss = running_loss / total_samples
 
     epoch_time = timeit.default_timer() - start_time
+
+    auroc(global_probs, global_target.long())
+    global_target = global_target.cpu().detach().numpy()
+    global_pred = global_pred.cpu().detach().numpy()
+    global_probs = global_probs.cpu().detach().numpy()
 
     # TODO: Wrongly classified images can also be logged with wandb
     #  https://docs.wandb.ai/ref/python/log#image-from-numpy
