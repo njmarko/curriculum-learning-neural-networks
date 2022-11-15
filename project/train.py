@@ -13,6 +13,8 @@
 #  UserWarning: No positive samples in targets, true positive value should be meaningless.
 #  Returning zero tensor in true positive score
 #   warnings.warn(*args, **kwargs)
+# TODO: Check why ROC curve displays class 0 as a straight line
+# TODO: Consider changing x axis to epochs in wandb
 
 import argparse
 import os
@@ -48,13 +50,12 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
 
     running_loss = 0.0
 
-    # TODO: Training time jumped to 10 seconds from 7. Determine if metrics are affecting it or wandb logging.
     metrics = MetricCollection({'train_f1_micro': MulticlassF1Score(num_classes=opt.num_classes, average='micro'),
                                 'train_f1_macro': MulticlassF1Score(num_classes=opt.num_classes, average='macro'),
                                 'train_precision': MulticlassPrecision(num_classes=opt.num_classes),
                                 'train_recall': MulticlassRecall(num_classes=opt.num_classes),
                                 }
-                               ).to(opt.device)
+                               )
     auroc = MulticlassAUROC(num_classes=opt.num_classes, average='macro')
 
     start_time = timeit.default_timer()
@@ -68,32 +69,29 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
         _, pred = torch.max(probs, dim=1)
         target = target.to(opt.device)
 
-        metrics(pred, target)
-        auroc(probs, target)
-
         loss = F.nll_loss(probs, target)
         loss.backward()
         optimizer.step()
         scheduler.step()
 
-        target = target.cpu().detach().numpy()
-        pred = pred.cpu().detach().numpy()
-        probs = probs.cpu().detach().numpy()
-        global_target = np.concatenate((global_target, target))
-        global_pred = np.concatenate((global_pred, pred))
-        global_probs = np.vstack((global_probs, probs))
+        target = target.cpu().detach()
+        pred = pred.cpu().detach()
+        probs = probs.cpu().detach()
+        metrics(pred, target)
+        auroc(probs, target)
+        global_target = np.concatenate((global_target, target.numpy()))
+        global_pred = np.concatenate((global_pred, pred.numpy()))
+        global_probs = np.vstack((global_probs, probs.numpy()))
 
         running_loss += loss.item() * data.size(0)
 
-        # TODO: Check if this affects performance
-        wandb.log({"train_lr": scheduler.get_last_lr()[0]},
-                  # commit=False, # Commit=False just accumulates data
-                  )
+        if i % 5 == 0:
+            wandb.log({"train_lr": scheduler.get_last_lr()[0]},
+                      # commit=False, # Commit=False just accumulates data
+                      )
 
-    # TODO: Determine if there are 8000 examples (len(data_loader.dataset)) per epoch or 250 (len(data_loader))
     epoch_loss = running_loss / total_samples
 
-    # TODO: change epoch_time from real time to execution time
     epoch_time = timeit.default_timer() - start_time
     print(f"Epoch time {epoch_time}")
     log_metrics = {
@@ -101,7 +99,6 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
         "train_epoch_loss": epoch_loss,
         "train_epoch_time": epoch_time,
         # TODO: Check if the class names correspond to the right label numbers
-        # TODO: Determine why so many (up to 77) run_table artifacts are saved in wandb for roc and confusion matrix
         "train_confusion_matrix": wandb.plot.confusion_matrix(probs=global_probs, y_true=global_target,
                                                               class_names=['ellipse', 'square', 'triangle'],
                                                               title="Train confusion matrix"),
@@ -110,8 +107,6 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
                                           title="Train ROC", ),
         "train_auroc_macro": auroc.compute()
     }
-
-    wandb.log(log_metrics)
     return log_metrics
 
 
@@ -132,7 +127,7 @@ def validation(model, data_loader, opt):
                                 'val_precision': MulticlassPrecision(num_classes=opt.num_classes),
                                 'val_recall': MulticlassRecall(num_classes=opt.num_classes),
                                 }
-                               ).to(opt.device)
+                               )
     auroc = MulticlassAUROC(num_classes=opt.num_classes, average='macro')
     start_time = timeit.default_timer()
     with torch.no_grad():
@@ -144,23 +139,19 @@ def validation(model, data_loader, opt):
             loss = F.nll_loss(probs, target, reduction='sum')
             _, pred = torch.max(probs, dim=1)
 
+            target = target.cpu().detach()
+            pred = pred.cpu().detach()
+            probs = probs.cpu().detach()
             metrics(pred, target)
             auroc(probs, target)
-
-            target = target.cpu().detach().numpy()
-            pred = pred.cpu().detach().numpy()
-            probs = probs.cpu().detach().numpy()
-
-            global_target = np.concatenate((global_target, target))
-            global_pred = np.concatenate((global_pred, pred))
-            global_probs = np.vstack((global_probs, probs))
+            global_target = np.concatenate((global_target, target.numpy()))
+            global_pred = np.concatenate((global_pred, pred.numpy()))
+            global_probs = np.vstack((global_probs, probs.numpy()))
 
             running_loss += loss.item() * data.size(0)
 
-    # TODO: Determine if there are 8000 examples (len(data_loader.dataset)) per epoch or 250 (len(data_loader))
     epoch_loss = running_loss / total_samples
 
-    # TODO: change epoch_time from real time to execution time
     epoch_time = timeit.default_timer() - start_time
 
     # TODO: Wrongly classified images can also be logged with wandb
@@ -178,8 +169,6 @@ def validation(model, data_loader, opt):
                                         title="Validation ROC", ),
         "val_auroc_macro": auroc.compute(),
     }
-
-    wandb.log(log_metrics)
     return log_metrics
 
 
@@ -398,18 +387,28 @@ def run_experiment(max_epoch, model_id):
     artifact = wandb.Artifact(name=f'train-{opt.exp_name}-{model_id}-max_epochs{opt.n_epochs}', type='model')
     for epoch in range(1, opt.n_epochs + 1):
         print(f"{epoch=}")
-        train(model=model, optimizer=optimizer, data_loader=train_loader, opt=opt,
-              scheduler=scheduler)
-        metrics = validation(model=model, data_loader=val_loader, opt=opt)
+        train_metrics = train(model=model, optimizer=optimizer, data_loader=train_loader, opt=opt,
+                              scheduler=scheduler)
+        val_metrics = validation(model=model, data_loader=val_loader, opt=opt)
+
+        # TODO: Add early stopping - Maybe not needed for this experiment. In that case log tables before ending
+        if epoch < opt.n_epochs:
+            del train_metrics["train_confusion_matrix"]
+            del train_metrics["train_roc"]
+            del val_metrics["val_confusion_matrix"]
+            del val_metrics["val_roc"]
+        wandb.log(train_metrics)
+        wandb.log(val_metrics)
+
         # TODO: Save both best model and last model for the experiment
         #  (ex. best was in epoch 16 but last was also saved in epoch 20)
-        if metrics['val_f1_macro'] > best_model_f1_macro:
-            print(f"Saving model with new best {metrics['val_f1_macro']=}")
-            best_model_f1_macro, best_epoch = metrics['val_f1_macro'], epoch
+        if val_metrics['val_f1_macro'] > best_model_f1_macro:
+            print(f"Saving model with new best {val_metrics['val_f1_macro']=}")
+            best_model_f1_macro, best_epoch = val_metrics['val_f1_macro'], epoch
             Path(f'experiments/{opt.exp_name}').mkdir(exist_ok=True)
             new_best_path = os.path.join(f'experiments/{opt.exp_name}',
                                          f'train-{opt.exp_name}-{model_id}-max_epochs{opt.n_epochs}-epoch{epoch}'
-                                         f'-metric{metrics["val_f1_macro"]:.4f}.pt')
+                                         f'-metric{val_metrics["val_f1_macro"]:.4f}.pt')
             torch.save(model.state_dict(), new_best_path)
             # TODO: Best model can also be saved in wandb
             #  https://docs.wandb.ai/guides/models
@@ -422,7 +421,6 @@ def run_experiment(max_epoch, model_id):
         artifact.add_file(best_model_path)
         wb_run_train.log_artifact(artifact)
 
-    # TODO: Add early stopping - Maybe not needed for this experiment
     wb_run_train.finish()
 
     # Test loading
