@@ -69,11 +69,12 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
 
     start_time = timeit.default_timer()
     for i, (data, target, path) in enumerate(data_loader):
+        data = data.to(opt.device)
+        target = target.to(opt.device)
         optimizer.zero_grad()
-        predictions = model(data.to(opt.device))
+        predictions = model(data)
         probs = F.softmax(predictions, dim=1)
         _, pred = torch.max(probs, dim=1)
-        target = target.to(opt.device)
 
         loss = F.nll_loss(probs, target)
         loss.backward()
@@ -127,6 +128,9 @@ def validation(model, data_loader, opt):
     global_pred = torch.tensor([], device=opt.device)
     global_probs = torch.empty((0, 3), device=opt.device)
     incorrect_img_paths = []
+    incorrect_img_labels = torch.tensor([], device=opt.device)
+    incorrect_img_predictions = torch.tensor([], device=opt.device)
+    incorrect_images = torch.tensor([], device=opt.device)
 
     running_loss = 0.0
 
@@ -140,14 +144,18 @@ def validation(model, data_loader, opt):
     start_time = timeit.default_timer()
     with torch.no_grad():
         for data, target, path in data_loader:
-            res = model(data.to(opt.device))
-            probs = F.softmax(res, dim=1)
+            data = data.to(opt.device)
             target = target.to(opt.device)
+            res = model(data)
+            probs = F.softmax(res, dim=1)
             probs = probs.to(opt.device)
             loss = F.nll_loss(probs, target, reduction='sum')
             _, pred = torch.max(probs, dim=1)
 
             incorrect_img_paths += [path[i] for i in range(len(path)) if pred[i] != target[i]]
+            incorrect_img_labels = torch.concatenate((incorrect_img_labels, target[pred != target]))
+            incorrect_img_predictions = torch.concatenate((incorrect_img_predictions, pred[pred != target]))
+            incorrect_images = torch.concatenate((incorrect_images, data[pred != target]))
 
             metrics(pred, target)
             global_target = torch.concatenate((global_target, target))
@@ -164,13 +172,21 @@ def validation(model, data_loader, opt):
     global_target = global_target.cpu().detach().numpy()
     global_pred = global_pred.cpu().detach().numpy()
     global_probs = global_probs.cpu().detach().numpy()
+    incorrect_img_labels = incorrect_img_labels.cpu().detach().numpy()
+    incorrect_img_predictions = incorrect_img_predictions.cpu().detach().numpy()
+    incorrect_images = incorrect_images.cpu().detach().numpy()
 
     # TODO: Wrongly classified images can also be logged with wandb
     #  https://docs.wandb.ai/ref/python/log#image-from-numpy
 
-    # TODO: Log bar plot with both shape and difficulty of the missclasified example ex. triangle_diff_1, ellipse_diff_2
+    # TODO: Log bar plot with both shape and difficulty of the misclassified example ex. triangle_diff_1, ellipse_diff_2
 
     diff_mistakes = [int(re.search(r"(?<=diff)[0-9]", i).group()) for i in incorrect_img_paths]
+
+    mistakes_data = [[incorrect_img_paths[i], diff_mistakes[i],
+                      wandb.Image(data_or_path=incorrect_images[i], caption=incorrect_img_paths[i]),
+                      incorrect_img_predictions[i],
+                      incorrect_img_labels[i]] for i in range(len(incorrect_img_paths))]
     log_metrics = {
         **metrics.compute(),
         "val_epoch_loss": epoch_loss,
@@ -187,6 +203,8 @@ def validation(model, data_loader, opt):
             table=wandb.Table(data=np.asarray([[d, diff_mistakes.count(d)] for d in range(1, 5)]),
                               columns=["difficulty", "mistakes"]),
             value="mistakes", label="difficulty", title="Mistakes by difficulty"),
+        "val_mistakes_table": wandb.Table(data=mistakes_data,
+                                          columns=['path', 'difficulty', 'image', 'prediction', 'label']),
     }
     return log_metrics
 
@@ -429,6 +447,7 @@ def run_experiment(max_epoch, model_id):
             del val_metrics["val_confusion_matrix"]
             del val_metrics["val_roc"]
             del val_metrics["val_mistakes_by_diff_bar"]
+            del val_metrics["val_mistakes_table"]
         wandb.log(train_metrics)
         wandb.log(val_metrics)
 
