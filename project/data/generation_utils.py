@@ -1,9 +1,6 @@
-import numpy as np
-import cv2
 import random
-from datetime import datetime
-import os
-import matplotlib.pyplot as plt
+
+import numpy as np
 
 
 def pt():

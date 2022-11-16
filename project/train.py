@@ -12,29 +12,24 @@
 import argparse
 import os
 import random
-import time
+import re
 import timeit
+from itertools import cycle, islice
 from pathlib import Path
 
 import cv2
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.multiprocessing as mp
 import torch.nn.functional as F
+from torch import optim
+from torchmetrics import MetricCollection
+from torchmetrics.classification import MulticlassF1Score, MulticlassPrecision, MulticlassRecall, MulticlassAUROC
 
 import wandb
-from sklearn.metrics import f1_score, confusion_matrix, recall_score, precision_score, roc_auc_score
-from torch import optim
-
 from data.data_loader import load_dataset
 from models.cnn_v1 import CnnV1
-from itertools import repeat, cycle, islice
-import torch.multiprocessing as mp
-
-from torchmetrics.classification import MulticlassF1Score, MulticlassPrecision, MulticlassRecall, MulticlassAUROC, \
-    MulticlassConfusionMatrix
-from torchmetrics import MetricCollection
-import matplotlib.pyplot as plt
-import re
 
 
 def show_batch(image_batch, label_batch):
@@ -345,7 +340,9 @@ def create_experiments():
 
     model_ids = [f'model_{i}' for i in range(opt.n_models)]
 
-    epoch_ranges = torch.linspace(10, opt.n_epochs - 1, opt.n_models).long()
+    # TODO: Add lower bound for epochs in argparser options.
+    # TODO: Add experiment specific settings to argparser.
+    epoch_ranges = torch.linspace(5, opt.n_epochs - 1, opt.n_models).long()
 
     with mp.Pool(opt.parallel_processes) as pool:
         pool.starmap(run_experiment, zip(epoch_ranges, model_ids))
@@ -434,6 +431,8 @@ def run_experiment(max_epoch, model_id):
     best_model_path = None
     best_epoch = 0
     artifact = wandb.Artifact(name=f'train-{opt.group}-{model_id}-max_epochs{opt.n_epochs}', type='model')
+
+    # TODO: Add training resuming. This can be done from the model saved in wandb or from the local model
     for epoch in range(1, opt.n_epochs + 1):
         print(f"{epoch=}")
         train_metrics = train(model=model, optimizer=optimizer, data_loader=train_loader, opt=opt,
@@ -493,6 +492,9 @@ def run_experiment(max_epoch, model_id):
 
     # TODO: Create a new helper function that returns the number of model parameters
     # TODO: Also save number of parameters for the model in the wandb config
+    # TODO: Save a model architecture that was used. This should include the layer information,
+    #  similarly to how torch returns the architecture.
+    #  Maybe even as an image if it can be visualized with some library
     # pytorch_total_params = sum(p.numel() for p in model.parameters())
     # print(pytorch_total_params)
     eval_metrics = validation(model=model, data_loader=test_loader, opt=opt)
