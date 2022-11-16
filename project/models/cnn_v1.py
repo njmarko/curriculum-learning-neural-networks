@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 class CnnV1(nn.Module):
 
-    def __init__(self, depth=2, in_channels=1, out_channels=8, kernel_dim=3, mlp_dim=16, padding=1,
+    def __init__(self, depth=2, in_channels=1, out_channels=8, kernel_dim=3, mlp_dim=3, padding=1,
                  stride=1, max_pool=3, dropout=0.2, *args, **kwargs):
         super(CnnV1, self).__init__()
         # TODO: Save all params as attributes

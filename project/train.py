@@ -1,22 +1,14 @@
-# TODO: Log experiment results with wandb
-# TODO: Save models and results in experiments folder
-# TODO: Create argparser for all parameters that can be defined
-# TODO: Add parallelized training and logging for all experiments
 # TODO: Try out model that Bengio used in his paper
 # TODO: Check out some of the best modern practices for training NNs
 #  https://wandb.ai/site/articles/debugging-neural-networks-with-pytorch-and-w-b-using-gradients-and-visualizations
 #  https://wandb.ai/wandb-smle/integration_best_practices/reports/W-B-Integration-Best-Practices--VmlldzoyMzc5MTI2
 # TODO: Fix error that appears at the start
 #  wandb: ERROR Failed to sample metric: Not Supported
-# TODO: Fix warning that probably happens for AUROC
-#  ....\project\venv\lib\site-packages\torchmetrics\utilities\prints.py:36:
-#  UserWarning: No positive samples in targets, true positive value should be meaningless.
-#  Returning zero tensor in true positive score
-#   warnings.warn(*args, **kwargs)
-# TODO: Check why ROC curve displays class 0 as a straight line
+# TODO: Check why ROC curve displays class 0 as a straight line in validation
 # TODO: Consider changing x axis to epochs in wandb
 # TODO: Useful resource for wandb
 #  https://www.kaggle.com/code/ayuraj/experiment-tracking-with-weights-and-biases?scriptVersionId=63334832&cellId=18
+
 import argparse
 import os
 import random
@@ -42,6 +34,7 @@ from torchmetrics.classification import MulticlassF1Score, MulticlassPrecision, 
     MulticlassConfusionMatrix
 from torchmetrics import MetricCollection
 import matplotlib.pyplot as plt
+import re
 
 
 def show_batch(image_batch, label_batch):
@@ -75,7 +68,7 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
     auroc = MulticlassAUROC(num_classes=opt.num_classes, average='macro').to(opt.device)
 
     start_time = timeit.default_timer()
-    for i, (data, target) in enumerate(data_loader):
+    for i, (data, target, path) in enumerate(data_loader):
         optimizer.zero_grad()
         predictions = model(data.to(opt.device))
         probs = F.softmax(predictions, dim=1)
@@ -133,6 +126,7 @@ def validation(model, data_loader, opt):
     global_target = torch.tensor([], device=opt.device)
     global_pred = torch.tensor([], device=opt.device)
     global_probs = torch.empty((0, 3), device=opt.device)
+    incorrect_img_paths = []
 
     running_loss = 0.0
 
@@ -145,13 +139,15 @@ def validation(model, data_loader, opt):
     auroc = MulticlassAUROC(num_classes=opt.num_classes, average='macro').to(opt.device)
     start_time = timeit.default_timer()
     with torch.no_grad():
-        for data, target in data_loader:
+        for data, target, path in data_loader:
             res = model(data.to(opt.device))
             probs = F.softmax(res, dim=1)
             target = target.to(opt.device)
             probs = probs.to(opt.device)
             loss = F.nll_loss(probs, target, reduction='sum')
             _, pred = torch.max(probs, dim=1)
+
+            incorrect_img_paths += [path[i] for i in range(len(path)) if pred[i] != target[i]]
 
             metrics(pred, target)
             global_target = torch.concatenate((global_target, target))
@@ -171,6 +167,10 @@ def validation(model, data_loader, opt):
 
     # TODO: Wrongly classified images can also be logged with wandb
     #  https://docs.wandb.ai/ref/python/log#image-from-numpy
+
+    # TODO: Log bar plot with both shape and difficulty of the missclasified example ex. triangle_diff_1, ellipse_diff_2
+
+    diff_mistakes = [int(re.search(r"(?<=diff)[0-9]", i).group()) for i in incorrect_img_paths]
     log_metrics = {
         **metrics.compute(),
         "val_epoch_loss": epoch_loss,
@@ -183,6 +183,10 @@ def validation(model, data_loader, opt):
                                         # classes_to_plot=['ellipse', 'square', 'triangle'],
                                         title="Validation ROC", ),
         "val_auroc_macro": auroc.compute(),
+        "val_mistakes_by_diff_bar": wandb.plot.bar(
+            table=wandb.Table(data=np.asarray([[d, diff_mistakes.count(d)] for d in range(1, 5)]),
+                              columns=["difficulty", "mistakes"]),
+            value="mistakes", label="difficulty", title="Mistakes by difficulty"),
     }
     return log_metrics
 
@@ -253,6 +257,8 @@ def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choi
                         help=f'Optimizer to be used {optimizer_choices.keys()}')
     parser.add_argument('-lr', '--learning_rate', type=float, default=3e-4, help="Learning rate")
     parser.add_argument('-wd', '--weight_decay', type=float, default=0.05, help="Weight decay for optimizer")
+    parser.add_argument('-momentum', '--momentum', type=float, default=0.9,
+                        help="Momentum value for optimizers like SGD")
 
     # Scheduler options
     parser.add_argument('-sch', '--scheduler', type=str.lower, default='cycliclr',
@@ -333,7 +339,8 @@ def run_experiment(max_epoch, model_id):
     # Model options
     model_choices = {CnnV1.__name__.lower(): CnnV1, }  # TODO: Add more model choices
 
-    optimizer_choices = {optim.AdamW.__name__.lower(): optim.AdamW, }  # TODO: Add more optimizer choices
+    optimizer_choices = {optim.AdamW.__name__.lower(): optim.AdamW,
+                         optim.SGD.__name__.lower(): optim.SGD}  # TODO: Add more optimizer choices
 
     # Scheduler options
     scheduler_choices = {
@@ -392,7 +399,7 @@ def run_experiment(max_epoch, model_id):
     #  lr_finder = LRFinder(net, optimizer, device)
     #  lr_finder.range_test(trainloader, end_lr=10, num_iter=100, logwandb=True)
 
-    optimizer = optimizer_choices[opt.optimizer](model.parameters(), lr=opt.learning_rate,
+    optimizer = optimizer_choices[opt.optimizer](params=model.parameters(), lr=opt.learning_rate,
                                                  weight_decay=opt.weight_decay)
 
     # TODO: Scheduler worked better when base and max values were reversed. We should look into that
@@ -421,6 +428,7 @@ def run_experiment(max_epoch, model_id):
             del train_metrics["train_roc"]
             del val_metrics["val_confusion_matrix"]
             del val_metrics["val_roc"]
+            del val_metrics["val_mistakes_by_diff_bar"]
         wandb.log(train_metrics)
         wandb.log(val_metrics)
 
@@ -468,8 +476,8 @@ def run_experiment(max_epoch, model_id):
     # TODO: Also save number of parameters for the model in the wandb config
     # pytorch_total_params = sum(p.numel() for p in model.parameters())
     # print(pytorch_total_params)
-    res = validation(model=model, data_loader=test_loader, opt=opt)
-    print(f"TEST FINISHED {res}")
+    eval_metrics = validation(model=model, data_loader=test_loader, opt=opt)
+    wandb.log(eval_metrics)
     wb_run_eval.finish()
 
 
