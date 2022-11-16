@@ -8,6 +8,7 @@
 # TODO: Consider changing x axis to epochs in wandb
 # TODO: Useful resource for wandb
 #  https://www.kaggle.com/code/ayuraj/experiment-tracking-with-weights-and-biases?scriptVersionId=63334832&cellId=18
+# TODO: Check the amount of noise that should be added to generated images at higher difficulties. Seems too low now
 
 import argparse
 import os
@@ -171,14 +172,11 @@ def validation(model, data_loader, opt):
     incorrect_img_predictions = incorrect_img_predictions.cpu().detach().numpy()
     incorrect_images = incorrect_images.cpu().detach().numpy()
 
-    # TODO: Wrongly classified images can also be logged with wandb
-    #  https://docs.wandb.ai/ref/python/log#image-from-numpy
-
-    # TODO: Log bar plot with both shape and difficulty of the misclassified example ex. triangle_diff_1, ellipse_diff_2
-
     diff_mistakes = [int(re.search(r"(?<=diff)[0-9]", i).group()) for i in incorrect_img_paths]
+    shapes_mistakes = [re.search(r"ellipse|triangle|square", i).group() for i in incorrect_img_paths]
+    shape_diff_mistakes = [f"{s}_{d}" for s, d in zip(shapes_mistakes, diff_mistakes)]
 
-    mistakes_data = [[incorrect_img_paths[i], diff_mistakes[i],
+    mistakes_data = [[incorrect_img_paths[i], diff_mistakes[i], shapes_mistakes[i],
                       wandb.Image(data_or_path=incorrect_images[i], caption=incorrect_img_paths[i]),
                       incorrect_img_predictions[i],
                       incorrect_img_labels[i]] for i in range(len(incorrect_img_paths))]
@@ -198,8 +196,16 @@ def validation(model, data_loader, opt):
             table=wandb.Table(data=np.asarray([[d, diff_mistakes.count(d)] for d in range(1, 5)]),
                               columns=["difficulty", "mistakes"]),
             value="mistakes", label="difficulty", title="Mistakes by difficulty"),
+        "val_mistakes_by_shape_bar": wandb.plot.bar(
+            table=wandb.Table(data=np.asarray([[d, shapes_mistakes.count(d)] for d in set(shapes_mistakes)]),
+                              columns=["shapes", "mistakes"]),
+            value="mistakes", label="shapes", title="Mistakes by shape"),
+        "val_mistakes_by_shape_diff_bar": wandb.plot.bar(
+            table=wandb.Table(data=np.asarray([[d, shape_diff_mistakes.count(d)] for d in set(shape_diff_mistakes)]),
+                              columns=["shape_and_difficulty", "mistakes"]),
+            value="mistakes", label="shape_and_difficulty", title="Mistakes by shape and difficulty"),
         "val_mistakes_table": wandb.Table(data=mistakes_data,
-                                          columns=['path', 'difficulty', 'image', 'prediction', 'label']),
+                                          columns=['path', 'difficulty', 'shape', 'image', 'prediction', 'label']),
     }
     return log_metrics
 
@@ -447,6 +453,8 @@ def run_experiment(max_epoch, model_id):
             del val_metrics["val_roc"]
             del val_metrics["val_mistakes_by_diff_bar"]
             del val_metrics["val_mistakes_table"]
+            del val_metrics["val_mistakes_by_shape_bar"]
+            del val_metrics["val_mistakes_by_shape_diff_bar"]
         wandb.log(train_metrics)
         wandb.log(val_metrics)
 
