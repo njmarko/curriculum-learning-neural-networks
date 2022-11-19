@@ -264,11 +264,14 @@ def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choi
     # Training options
     parser.add_argument('-device', '--device', type=str, default='cuda', help="Device to be used")
     parser.add_argument('-e', '--n_epochs', type=int, default=20, help="Number of epochs")
+    parser.add_argument('-min_e', '--min_epochs', type=int, default=5, help="Minimum number of epochs")
     parser.add_argument('-nm', '--n_models', type=int, default=50, help="Number of models to be trained")
     parser.add_argument('-pp', '--parallel_processes', type=int, default=1,
                         help="Number of parallel processes to spawn for models [0 for all available cores]")
     parser.add_argument('-seed_everything', '--seed_everything', type=int, default=-1,
                         help="Set random seed for everything")
+    parser.add_argument('-min_score', '--min_score', type=int, default=50, help="Minimum score up to which the models will be trained")
+    parser.add_argument('-max_score', '--max_score', type=int, default=99, help="Maximum score up to which the models will be trained")
     parser.add_argument('-score_step', '--score_step', type=int, default=1, 
                         help="Step between two nearest scores of consecutive models, up to which they are trained")
 
@@ -341,27 +344,20 @@ def pass_right_constructor_arguments(target_class, opt):
 
 
 def create_experiments():
-    # TODO: Pass specific options for each experiment
-
     parser = create_arg_parser()
     opt = parser.parse_args()
 
     model_ids = [f'model_{i}' for i in range(opt.n_models)]
 
-    # TODO: Add lower bound for epochs in argparser options.
-    # TODO: Add experiment specific settings to argparser.
-    epoch_ranges = torch.linspace(5, opt.n_epochs - 1, opt.n_models).long()
-
-#     args_iter = zip(repeat(project_name), api_extensions)
-#     kwargs_iter = repeat(dict(payload={'a': 1}, key=True))
+    epoch_ranges = torch.linspace(opt.min_epochs, opt.n_epochs - 1, opt.n_models).long()
 
     functions_iter = repeat(run_experiment)
     args_iter = zip(model_ids)
     kwargs_iter = [
             {
-                'max_score': (i//10)*10 + ((i%10)//5) * 5,
-                'max_epoch': 30
-            } for i in torch.linspace(50, 99, opt.n_models).long()
+                'max_score': (i//10)*10 + ((i%10)//opt.score_step) * opt.score_step,
+                'max_epoch': opt.n_epochs
+            } for i in torch.linspace(opt.min_score, opt.max_score, opt.n_models).long()
         ]
     
     with mp.Pool(opt.parallel_processes) as pool:
@@ -372,8 +368,6 @@ def _proc_starter(f, args, kwargs):
 
 
 def run_experiment(model_id, max_epoch=100, max_score=1):
-    # TODO: Make run_experiment more generic to support different types of experiments other than variable epochs ones
-
     # Model options
     model_choices = {CnnV1.__name__.lower(): CnnV1, }  # TODO: Add more model choices
 
@@ -433,16 +427,13 @@ def run_experiment(model_id, max_epoch=100, max_score=1):
     # TODO: Test SGD with momentum with parameters that look similar to this
     #  optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
     #  scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=0.01, max_lr=0.1)
-    # TODO: Test LRFinder
-    #  lr_finder = LRFinder(net, optimizer, device)
-    #  lr_finder.range_test(trainloader, end_lr=10, num_iter=100, logwandb=True)
+    # TODO: Optimize hyper-params with WandB Sweeper
 
     optimizer = optimizer_choices[opt.optimizer](params=model.parameters(), lr=opt.learning_rate,
                                                  weight_decay=opt.weight_decay)
 
     # TODO: Scheduler worked better when base and max values were reversed. We should look into that
     #   Maybe try base_lr of 0.001 with some other value for max_lr.
-    #   LRFinder could help us determine the optimal base_lr
     scheduler = scheduler_choices[opt.scheduler](optimizer=optimizer, base_lr=opt.base_lr, max_lr=opt.max_lr,
                                                  step_size_up=opt.step_size_up,
                                                  cycle_momentum=opt.cycle_momentum, mode=opt.scheduler_mode)
@@ -465,7 +456,7 @@ def run_experiment(model_id, max_epoch=100, max_score=1):
 
         # TODO: Add early stopping - Maybe not needed for this experiment. In that case log tables before ending
         last = epoch >= opt.n_epochs or val_metrics['val_f1_macro'] >= max_score
-        
+
         if not last:
             del train_metrics["train_confusion_matrix"]
             del train_metrics["train_roc"]
@@ -478,19 +469,15 @@ def run_experiment(model_id, max_epoch=100, max_score=1):
         wandb.log(train_metrics)
         wandb.log(val_metrics)
 
-        # TODO: Save both best model and last model for the experiment
-        #  (ex. best was in epoch 16 but last was also saved in epoch 20)
         if val_metrics['val_f1_macro'] > best_model_f1_macro:
             print(f"Saving model with new best {val_metrics['val_f1_macro']=}")
             best_model_f1_macro, best_epoch = val_metrics['val_f1_macro'], epoch
             Path(f'experiments/{opt.group}').mkdir(exist_ok=True)
             new_best_path = os.path.join(f'experiments/{opt.group}',
                                          f'train-{opt.group}-{model_id}-max_epochs{opt.n_epochs}-epoch{epoch}'
+                                         f'-max_metric{max_score}'
                                          f'-metric{val_metrics["val_f1_macro"]:.4f}.pt')
             torch.save(model.state_dict(), new_best_path)
-            # TODO: Best model can also be saved in wandb
-            #  https://docs.wandb.ai/guides/models
-            #  https://docs.wandb.ai/ref/python/artifact
             if best_model_path:
                 os.remove(best_model_path)
             best_model_path = new_best_path
