@@ -15,7 +15,7 @@ import os
 import random
 import re
 import timeit
-from itertools import cycle, islice
+from itertools import cycle, islice, repeat
 from pathlib import Path
 
 import cv2
@@ -265,7 +265,7 @@ def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choi
     parser.add_argument('-device', '--device', type=str, default='cuda', help="Device to be used")
     parser.add_argument('-e', '--n_epochs', type=int, default=20, help="Number of epochs")
     parser.add_argument('-nm', '--n_models', type=int, default=50, help="Number of models to be trained")
-    parser.add_argument('-pp', '--parallel_processes', type=int, default=0,
+    parser.add_argument('-pp', '--parallel_processes', type=int, default=1,
                         help="Number of parallel processes to spawn for models [0 for all available cores]")
     parser.add_argument('-seed_everything', '--seed_everything', type=int, default=-1,
                         help="Set random seed for everything")
@@ -350,11 +350,26 @@ def create_experiments():
     # TODO: Add experiment specific settings to argparser.
     epoch_ranges = torch.linspace(5, opt.n_epochs - 1, opt.n_models).long()
 
+#     args_iter = zip(repeat(project_name), api_extensions)
+#     kwargs_iter = repeat(dict(payload={'a': 1}, key=True))
+
+    functions_iter = repeat(run_experiment)
+    args_iter = zip(model_ids)
+    kwargs_iter = [
+            {
+                'max_score': (i//10)*10 + ((i%10)//5) * 5,
+                'max_epoch': 30
+            } for i in torch.linspace(50, 99, opt.n_models).long()
+        ]
+    
     with mp.Pool(opt.parallel_processes) as pool:
-        pool.starmap(run_experiment, zip(epoch_ranges, model_ids))
+        pool.starmap(_proc_starter, zip(functions_iter, args_iter, kwargs_iter))
+
+def _proc_starter(f, args, kwargs):
+    f(*args, **kwargs)
 
 
-def run_experiment(max_epoch, model_id):
+def run_experiment(model_id, max_epoch=100, max_score=1):
     # TODO: Make run_experiment more generic to support different types of experiments other than variable epochs ones
 
     # Model options
