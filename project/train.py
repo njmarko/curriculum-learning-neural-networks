@@ -359,7 +359,7 @@ def create_experiments():
     args_iter = zip(model_ids)
     kwargs_iter = [
         {
-            'max_score': (i // 10) * 10 + ((i % 10) // opt.score_step) * opt.score_step,
+            'max_score': ((i // 10) * 10 + ((i % 10) // opt.score_step) * opt.score_step) / 100,
             'max_epoch': opt.n_epochs
         } for i in torch.linspace(opt.min_score, opt.max_score, opt.n_models).long()
     ]
