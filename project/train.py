@@ -264,8 +264,9 @@ def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choi
 
     # Training options
     parser.add_argument('-device', '--device', type=str, default='cuda', help="Device to be used")
-    parser.add_argument('-e', '--n_epochs', type=int, default=20, help="Number of epochs")
-    parser.add_argument('-min_e', '--min_epochs', type=int, default=5, help="Minimum number of epochs")
+    parser.add_argument('-e', '--n_epochs', type=int, default=20, help="Max number of epochs for the current model")
+    parser.add_argument('-max_e', '--max_epochs', type=int, default=20, help="Maximum number of epochs for all models")
+    parser.add_argument('-min_e', '--min_epochs', type=int, default=5, help="Minimum number of epochs for all models")
     parser.add_argument('-nm', '--n_models', type=int, default=50, help="Number of models to be trained")
     parser.add_argument('-pp', '--parallel_processes', type=int, default=1,
                         help="Number of parallel processes to spawn for models [0 for all available cores]")
@@ -275,6 +276,8 @@ def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choi
                         help="Minimum score up to which the models will be trained")
     parser.add_argument('-max_score', '--max_score', type=int, default=99,
                         help="Maximum score up to which the models will be trained")
+    parser.add_argument('-model_max_score', '--max_score', type=int, default=99,
+                        help="Maximum score up to which the current model will be trained")
     parser.add_argument('-score_step', '--score_step', type=int, default=1,
                         help="Step between two nearest scores of consecutive models, up to which they are trained")
 
@@ -322,7 +325,7 @@ def get_chunked_lists(opt):
         # Balanced chunks
         while len(model_ids) % chunk < chunk and len(model_ids) // (chunk - 1) < opt.parallel_processes:
             chunk -= 1
-    epochs = [e for e in range(10, opt.n_epochs)]
+    epochs = [e for e in range(10, opt.max_epochs)]
     epoch_ranges = list(islice(cycle(epochs), opt.n_models))
     epoch_splits = [epoch_ranges[i:i + chunk] for i in range(0, len(epoch_ranges), chunk)]
     model_id_splits = [model_ids[i:i + chunk] for i in range(0, len(model_ids), chunk)]
@@ -352,7 +355,7 @@ def create_experiments():
 
     model_ids = [f'model_{i}' for i in range(opt.n_models)]
 
-    epoch_ranges = torch.linspace(opt.min_epochs, opt.n_epochs - 1, opt.n_models).long()
+    epoch_ranges = torch.linspace(opt.min_epochs, opt.max_epochs - 1, opt.n_models).long()
     # TODO: Add experiment description to args and log it in wandb
 
     functions_iter = repeat(run_experiment)
@@ -360,7 +363,7 @@ def create_experiments():
     kwargs_iter = [
         {
             'max_score': ((i // 10) * 10 + ((i % 10) // opt.score_step) * opt.score_step) / 100,
-            'max_epoch': opt.n_epochs
+            'max_epoch': opt.max_epochs
         } for i in torch.linspace(opt.min_score, opt.max_score, opt.n_models).long()
     ]
 
@@ -397,7 +400,8 @@ def run_experiment(model_id, max_epoch=100, max_score=1):
         set_seed(opt.seed_everything)
 
     opt.n_epochs = max_epoch
-    print(f'{model_id} is training')
+    opt.model_max_score = max_score
+    print(f'{model_id} is training with {max_score=} and {max_epoch=}')
 
     # Add specific options for experiments
 
@@ -450,7 +454,6 @@ def run_experiment(model_id, max_epoch=100, max_score=1):
 
     best_model_f1_macro = -np.Inf
     best_model_path = None
-    best_epoch = 0
     artifact = wandb.Artifact(name=f'train-{opt.group}-{model_id}-max_epochs{opt.n_epochs}', type='model')
 
     # TODO: Add training resuming. This can be done from the model saved in wandb or from the local model
@@ -489,6 +492,9 @@ def run_experiment(model_id, max_epoch=100, max_score=1):
             best_model_path = new_best_path
 
         if last:
+            print(
+                f"Finished training a {model_id=} with {max_epoch=} and {max_score=} "
+                f"with va_f1_macro {val_metrics['val_f1_macro']}")
             break
 
     if opt.save_model_wandb:
