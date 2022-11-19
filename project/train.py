@@ -276,7 +276,7 @@ def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choi
                         help="Minimum score up to which the models will be trained")
     parser.add_argument('-max_score', '--max_score', type=int, default=99,
                         help="Maximum score up to which the models will be trained")
-    parser.add_argument('-model_max_score', '--max_score', type=int, default=99,
+    parser.add_argument('-model_max_score', '--model_max_score', type=int, default=99,
                         help="Maximum score up to which the current model will be trained")
     parser.add_argument('-score_step', '--score_step', type=int, default=1,
                         help="Step between two nearest scores of consecutive models, up to which they are trained")
@@ -425,8 +425,9 @@ def run_experiment(model_id, max_epoch=100, max_score=1):
     wb_run_train = wandb.init(entity=opt.entity, project=opt.project_name, group=opt.group,
                               # save_code=True, # Pycharm complains about duplicate code fragments
                               job_type="train",
-                              tags=['variable_epochs'],
-                              name=f'{model_id}_train',
+                              # TODO: Add tags as arguments for argparser
+                              tags=['variable_max_score'],
+                              name=f'{model_id}_train_max_score_{max_score}',
                               config=opt,
                               )
 
@@ -507,8 +508,9 @@ def run_experiment(model_id, max_epoch=100, max_score=1):
     wb_run_eval = wandb.init(entity=opt.entity, project=opt.project_name, group=opt.group,
                              # save_code=True, # Pycharm complains about duplicate code fragments
                              job_type="eval",
-                             tags=['variable_epochs'],
-                             name=f'{model_id}_eval',
+                             # TODO: Replace with tags argument from argparser once its added
+                             tags=['variable_max_score'],
+                             name=f'{model_id}_eval_max_score_{max_score}',
                              config=opt,
                              )
 
