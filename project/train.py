@@ -269,6 +269,8 @@ def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choi
                         help="Number of parallel processes to spawn for models [0 for all available cores]")
     parser.add_argument('-seed_everything', '--seed_everything', type=int, default=-1,
                         help="Set random seed for everything")
+    parser.add_argument('-score_step', '--score_step', type=int, default=1, 
+                        help="Step between two nearest scores of consecutive models, up to which they are trained")
 
     # Optimizer options
     parser.add_argument('-optim', '--optimizer', type=str.lower, default="adamw",
@@ -460,8 +462,11 @@ def run_experiment(model_id, max_epoch=100, max_score=1):
                               scheduler=scheduler)
         val_metrics = validation(model=model, data_loader=val_loader, opt=opt)
 
+
         # TODO: Add early stopping - Maybe not needed for this experiment. In that case log tables before ending
-        if epoch < opt.n_epochs:
+        last = epoch >= opt.n_epochs or val_metrics['val_f1_macro'] >= max_score
+        
+        if not last:
             del train_metrics["train_confusion_matrix"]
             del train_metrics["train_roc"]
             del val_metrics["val_confusion_matrix"]
@@ -489,6 +494,8 @@ def run_experiment(model_id, max_epoch=100, max_score=1):
             if best_model_path:
                 os.remove(best_model_path)
             best_model_path = new_best_path
+
+        if last: break
 
     if opt.save_model_wandb:
         artifact.add_file(best_model_path)
