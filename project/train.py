@@ -36,7 +36,7 @@ from models.cnn_v1 import CnnV1
 def show_batch(image_batch, label_batch):
     plt.figure(figsize=(20, 20))
     for n in range(25):
-        ax = plt.subplot(5, 5, n + 1)
+        plt.subplot(5, 5, n + 1)
         img = image_batch[n]
         plt.imshow(cv2.cvtColor(img.squeeze().numpy(), cv2.COLOR_GRAY2RGB))
         label = label_batch[n].numpy()
@@ -180,6 +180,8 @@ def validation(model, data_loader, opt):
                       wandb.Image(data_or_path=incorrect_images[i], caption=incorrect_img_paths[i]),
                       incorrect_img_predictions[i],
                       incorrect_img_labels[i]] for i in range(len(incorrect_img_paths))]
+    # TODO: Determine if wandb is saving all the plots as artifacts in every epoch locally on the file system. This
+    #  could create unnecessarily large folders
     log_metrics = {
         **metrics.compute(),
         "val_epoch_loss": epoch_loss,
@@ -270,9 +272,11 @@ def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choi
                         help="Number of parallel processes to spawn for models [0 for all available cores]")
     parser.add_argument('-seed_everything', '--seed_everything', type=int, default=-1,
                         help="Set random seed for everything")
-    parser.add_argument('-min_score', '--min_score', type=int, default=50, help="Minimum score up to which the models will be trained")
-    parser.add_argument('-max_score', '--max_score', type=int, default=99, help="Maximum score up to which the models will be trained")
-    parser.add_argument('-score_step', '--score_step', type=int, default=1, 
+    parser.add_argument('-min_score', '--min_score', type=int, default=50,
+                        help="Minimum score up to which the models will be trained")
+    parser.add_argument('-max_score', '--max_score', type=int, default=99,
+                        help="Maximum score up to which the models will be trained")
+    parser.add_argument('-score_step', '--score_step', type=int, default=1,
                         help="Step between two nearest scores of consecutive models, up to which they are trained")
 
     # Optimizer options
@@ -350,18 +354,25 @@ def create_experiments():
     model_ids = [f'model_{i}' for i in range(opt.n_models)]
 
     epoch_ranges = torch.linspace(opt.min_epochs, opt.n_epochs - 1, opt.n_models).long()
+    # TODO: Add experiment description to args
 
     functions_iter = repeat(run_experiment)
     args_iter = zip(model_ids)
     kwargs_iter = [
-            {
-                'max_score': (i//10)*10 + ((i%10)//opt.score_step) * opt.score_step,
-                'max_epoch': opt.n_epochs
-            } for i in torch.linspace(opt.min_score, opt.max_score, opt.n_models).long()
-        ]
-    
-    with mp.Pool(opt.parallel_processes) as pool:
-        pool.starmap(_proc_starter, zip(functions_iter, args_iter, kwargs_iter))
+        {
+            'max_score': (i // 10) * 10 + ((i % 10) // opt.score_step) * opt.score_step,
+            'max_epoch': opt.n_epochs
+        } for i in torch.linspace(opt.min_score, opt.max_score, opt.n_models).long()
+    ]
+
+    if opt.parallel_processes <= 1:
+        # It is faster to run the experiments on the main process if only one process should be used
+        for f, args, kwargs in zip(functions_iter, args_iter, kwargs_iter):
+            _proc_starter(f, args, kwargs)
+    else:
+        with mp.Pool(opt.parallel_processes) as pool:
+            pool.starmap(_proc_starter, zip(functions_iter, args_iter, kwargs_iter))
+
 
 def _proc_starter(f, args, kwargs):
     f(*args, **kwargs)
@@ -453,7 +464,6 @@ def run_experiment(model_id, max_epoch=100, max_score=1):
                               scheduler=scheduler)
         val_metrics = validation(model=model, data_loader=val_loader, opt=opt)
 
-
         # TODO: Add early stopping - Maybe not needed for this experiment. In that case log tables before ending
         last = epoch >= opt.n_epochs or val_metrics['val_f1_macro'] >= max_score
 
@@ -482,7 +492,8 @@ def run_experiment(model_id, max_epoch=100, max_score=1):
                 os.remove(best_model_path)
             best_model_path = new_best_path
 
-        if last: break
+        if last:
+            break
 
     if opt.save_model_wandb:
         artifact.add_file(best_model_path)
