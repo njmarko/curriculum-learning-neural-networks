@@ -180,8 +180,6 @@ def validation(model, data_loader, opt):
                       wandb.Image(data_or_path=incorrect_images[i], caption=incorrect_img_paths[i]),
                       incorrect_img_predictions[i],
                       incorrect_img_labels[i]] for i in range(len(incorrect_img_paths))]
-    # TODO: Determine if wandb is saving all the plots as artifacts in every epoch locally on the file system. This
-    #  could create unnecessarily large folders
     log_metrics = {
         **metrics.compute(),
         "val_epoch_loss": epoch_loss,
