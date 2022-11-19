@@ -75,7 +75,8 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
         loss = F.nll_loss(probs, target)
         loss.backward()
         optimizer.step()
-        scheduler.step()
+        if scheduler:
+            scheduler.step()
 
         metrics(pred, target)
         global_target = torch.concatenate((global_target, target))
@@ -84,7 +85,7 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
 
         running_loss += loss.item() * data.size(0)
 
-        if i % 5 == 0:
+        if i % 5 == 0 and scheduler:
             wandb.log({"train_lr": scheduler.get_last_lr()[0]},
                       # commit=False, # Commit=False just accumulates data
                       )
@@ -352,7 +353,7 @@ def create_experiments():
     model_ids = [f'model_{i}' for i in range(opt.n_models)]
 
     epoch_ranges = torch.linspace(opt.min_epochs, opt.n_epochs - 1, opt.n_models).long()
-    # TODO: Add experiment description to args
+    # TODO: Add experiment description to args and log it in wandb
 
     functions_iter = repeat(run_experiment)
     args_iter = zip(model_ids)
@@ -433,9 +434,6 @@ def run_experiment(model_id, max_epoch=100, max_score=1):
 
     model = model.to(opt.device)
 
-    # TODO: Test SGD with momentum with parameters that look similar to this
-    #  optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
-    #  scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=0.01, max_lr=0.1)
     # TODO: Optimize hyper-params with WandB Sweeper
 
     optimizer = optimizer_choices[opt.optimizer](params=model.parameters(), lr=opt.learning_rate,

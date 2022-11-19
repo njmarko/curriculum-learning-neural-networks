@@ -1,6 +1,5 @@
 import torch.nn
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 class CnnV1(nn.Module):
@@ -19,7 +18,6 @@ class CnnV1(nn.Module):
             nn.Flatten(),
         )
         encoder_channels = self.conv_blocks(torch.empty(batch_size, img_channels, *img_dims)).size(-1)
-        print(encoder_channels)
         self.linear = FCC(in_channels=encoder_channels, out_channels=out_channels, mlp_dim=mlp_dim, scaling_factor=16,
                           dropout=dropout)
 
