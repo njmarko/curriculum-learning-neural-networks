@@ -113,7 +113,7 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
     return log_metrics
 
 
-def validation(model, data_loader, opt):
+def validation(model, data_loader, opt, save_images=False):
     model.eval()
 
     total_samples = len(data_loader.dataset)
@@ -146,15 +146,11 @@ def validation(model, data_loader, opt):
             loss = F.nll_loss(probs, target, reduction='sum')
             _, pred = torch.max(probs, dim=1)
 
-            # TODO: Determining if this is the last epoch requires val_f1_macro. We can't detect the last epoch before
-            #  the epoch is over, but we can use the result of the previous epoch to determine if we are close
-            #  to the last epoch. If the val_f1_macro of the last epoch ic close to the max_score,
-            #  they we could start logging the data needed for the tables and plots that are used when
-            #  the last epoch is finished. Returning incorrect images may be the biggest overhead that can be avoided.
             incorrect_img_paths += [path[i] for i in range(len(path)) if pred[i] != target[i]]
             incorrect_img_labels = torch.concatenate((incorrect_img_labels, target[pred != target]))
             incorrect_img_predictions = torch.concatenate((incorrect_img_predictions, pred[pred != target]))
-            incorrect_images = torch.concatenate((incorrect_images, data[pred != target]))
+            if save_images:
+                incorrect_images = torch.concatenate((incorrect_images, data[pred != target]))
 
             metrics(pred, target)
             global_target = torch.concatenate((global_target, target))
@@ -268,6 +264,10 @@ def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choi
                         help="Maximum score up to which the current model will be trained")
     parser.add_argument('-score_step', '--score_step', type=int, default=1,
                         help="Step between two nearest scores of consecutive models, up to which they are trained")
+    parser.add_argument('-save_val_images', '--save_val_images', type=bool, default=False,
+                        help="Save validation images on which the model made mistakes in the last epoch")
+    parser.add_argument('-save_test_images', '--save_test_images', type=bool, default=False,
+                        help="Save test images on which the model made mistakes.")
 
     # Optimizer options
     parser.add_argument('-optim', '--optimizer', type=str.lower, default="adamw",
@@ -469,14 +469,14 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
             print(f"{epoch=}")
             train_metrics = train(model=model, optimizer=optimizer, data_loader=train_loader, opt=opt,
                                   scheduler=scheduler)
-            val_metrics = validation(model=model, data_loader=val_loader, opt=opt)
+            val_metrics = validation(model=model, data_loader=val_loader, opt=opt, save_images=opt.save_val_images)
 
             # TODO: Add early stopping - Maybe not needed for this experiment. In that case log tables before ending
             last = epoch >= opt.n_epochs or val_metrics['val_f1_macro'] >= max_score
 
             if last:
                 train_metrics.update(create_wandb_train_plots(train_metrics=train_metrics))
-                val_metrics.update(create_wandb_val_plots(val_metrics=val_metrics))
+                val_metrics.update(create_wandb_val_plots(val_metrics=val_metrics, save_images=opt.save_val_images))
 
             del_wandb_train_untracked_metrics(train_metrics=train_metrics)
             del_wandb_val_untracked_metrics(val_metrics=val_metrics)
@@ -541,8 +541,8 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
         #  Maybe even as an image if it can be visualized with some library
         # pytorch_total_params = sum(p.numel() for p in model.parameters())
         # print(pytorch_total_params)
-        eval_metrics = validation(model=model, data_loader=test_loader, opt=opt)
-        eval_metrics.update(create_wandb_val_plots(val_metrics=eval_metrics))
+        eval_metrics = validation(model=model, data_loader=test_loader, opt=opt, save_images=opt.save_test_images)
+        eval_metrics.update(create_wandb_val_plots(val_metrics=eval_metrics, save_images=opt.save_test_images))
         del_wandb_val_untracked_metrics(val_metrics=eval_metrics)
         wandb.log(eval_metrics)
         wb_run_eval.finish()
@@ -571,14 +571,15 @@ def create_wandb_train_plots(train_metrics):
     }
 
 
-def create_wandb_val_plots(val_metrics):
-    val_mistakes_data = [[val_metrics["val_incorrect_img_paths"][i], val_metrics["val_diff_mistakes"][i],
-                          val_metrics["val_shapes_mistakes"][i],
-                          wandb.Image(data_or_path=val_metrics["val_incorrect_images"][i],
-                                      caption=val_metrics["val_incorrect_img_paths"][i]),
-                          val_metrics["val_incorrect_img_predictions"][i],
-                          val_metrics["val_incorrect_img_labels"][i]] for i in
-                         range(len(val_metrics["val_incorrect_img_paths"]))]
+def create_wandb_val_plots(val_metrics, save_images=False):
+    if save_images:
+        val_mistakes_data = [[val_metrics["val_incorrect_img_paths"][i], val_metrics["val_diff_mistakes"][i],
+                              val_metrics["val_shapes_mistakes"][i],
+                              wandb.Image(data_or_path=val_metrics["val_incorrect_images"][i],
+                                          caption=val_metrics["val_incorrect_img_paths"][i]) if save_images else None,
+                              val_metrics["val_incorrect_img_predictions"][i],
+                              val_metrics["val_incorrect_img_labels"][i]] for i in
+                             range(len(val_metrics["val_incorrect_img_paths"]))]
     return {
 
         "val_confusion_matrix": wandb.plot.confusion_matrix(probs=val_metrics["val_global_probs"],
@@ -618,15 +619,15 @@ def del_wandb_train_untracked_metrics(train_metrics):
 
 
 def del_wandb_val_untracked_metrics(val_metrics):
-    del val_metrics["val_global_probs"]
-    del val_metrics["val_global_target"]
-    del val_metrics["val_diff_mistakes"]
-    del val_metrics["val_shapes_mistakes"]
-    del val_metrics["val_shape_diff_mistakes"]
-    del val_metrics["val_incorrect_img_paths"]
-    del val_metrics["val_incorrect_images"]
-    del val_metrics["val_incorrect_img_predictions"]
-    del val_metrics["val_incorrect_img_labels"]
+    val_metrics.pop("val_global_probs", None)
+    val_metrics.pop("val_global_target", None)
+    val_metrics.pop("val_diff_mistakes", None)
+    val_metrics.pop("val_shapes_mistakes", None)
+    val_metrics.pop("val_shape_diff_mistakes", None)
+    val_metrics.pop("val_incorrect_img_paths", None)
+    val_metrics.pop("val_incorrect_images", None)
+    val_metrics.pop("val_incorrect_img_predictions", None)
+    val_metrics.pop("val_incorrect_img_labels", None)
 
 
 def main():
