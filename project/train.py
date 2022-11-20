@@ -104,15 +104,11 @@ def train(model, optimizer, data_loader, opt, scheduler=None):
         **metrics.compute(),
         "train_epoch_loss": epoch_loss,
         "train_epoch_time": epoch_time,
-        "train_confusion_matrix": wandb.plot.confusion_matrix(probs=global_probs, y_true=global_target,
-                                                              class_names=['ellipse', 'square', 'triangle'],
-                                                              title="Train confusion matrix"),
-        "train_roc": wandb.plot.roc_curve(y_true=global_target, y_probas=global_probs,
-                                          labels=['ellipse', 'square', 'triangle'],
-                                          # TODO: Determine why classes_to_plot doesn't work with roc
-                                          # classes_to_plot=['ellipse', 'square', 'triangle'],
-                                          title="Train ROC", ),
-        "train_auroc_macro": auroc.compute()
+        "train_auroc_macro": auroc.compute(),
+        # Values below are used for constructing the wandb plots and tables.
+        # They should be deleted after they are used for creating plots and tables, and they should not be logged
+        "train_global_probs": global_probs,
+        "train_global_target": global_target,
     }
     return log_metrics
 
@@ -150,6 +146,11 @@ def validation(model, data_loader, opt):
             loss = F.nll_loss(probs, target, reduction='sum')
             _, pred = torch.max(probs, dim=1)
 
+            # TODO: Determining if this is the last epoch requires val_f1_macro. We can't detect the last epoch before
+            #  the epoch is over, but we can use the result of the previous epoch to determine if we are close
+            #  to the last epoch. If the val_f1_macro of the last epoch ic close to the max_score,
+            #  they we could start logging the data needed for the tables and plots that are used when
+            #  the last epoch is finished. Returning incorrect images may be the biggest overhead that can be avoided.
             incorrect_img_paths += [path[i] for i in range(len(path)) if pred[i] != target[i]]
             incorrect_img_labels = torch.concatenate((incorrect_img_labels, target[pred != target]))
             incorrect_img_predictions = torch.concatenate((incorrect_img_predictions, pred[pred != target]))
@@ -178,36 +179,22 @@ def validation(model, data_loader, opt):
     shapes_mistakes = [re.search(r"ellipse|triangle|square", i).group() for i in incorrect_img_paths]
     shape_diff_mistakes = [f"{s}_{d}" for s, d in zip(shapes_mistakes, diff_mistakes)]
 
-    mistakes_data = [[incorrect_img_paths[i], diff_mistakes[i], shapes_mistakes[i],
-                      wandb.Image(data_or_path=incorrect_images[i], caption=incorrect_img_paths[i]),
-                      incorrect_img_predictions[i],
-                      incorrect_img_labels[i]] for i in range(len(incorrect_img_paths))]
     log_metrics = {
         **metrics.compute(),
         "val_epoch_loss": epoch_loss,
         "val_evaluation_time": epoch_time,
-        "val_confusion_matrix": wandb.plot.confusion_matrix(probs=global_probs, y_true=global_target,
-                                                            class_names=['ellipse', 'square', 'triangle'],
-                                                            title="Validation confusion matrix"),
-        "val_roc": wandb.plot.roc_curve(y_true=global_target, y_probas=global_probs,
-                                        labels=['ellipse', 'square', 'triangle'],
-                                        # classes_to_plot=['ellipse', 'square', 'triangle'],
-                                        title="Validation ROC", ),
         "val_auroc_macro": auroc.compute(),
-        "val_mistakes_by_diff_bar": wandb.plot.bar(
-            table=wandb.Table(data=np.asarray([[d, diff_mistakes.count(d)] for d in range(1, 5)]),
-                              columns=["difficulty", "mistakes"]),
-            value="mistakes", label="difficulty", title="Mistakes by difficulty"),
-        "val_mistakes_by_shape_bar": wandb.plot.bar(
-            table=wandb.Table(data=np.asarray([[d, shapes_mistakes.count(d)] for d in set(shapes_mistakes)]),
-                              columns=["shapes", "mistakes"]),
-            value="mistakes", label="shapes", title="Mistakes by shape"),
-        "val_mistakes_by_shape_diff_bar": wandb.plot.bar(
-            table=wandb.Table(data=np.asarray([[d, shape_diff_mistakes.count(d)] for d in set(shape_diff_mistakes)]),
-                              columns=["shape_and_difficulty", "mistakes"]),
-            value="mistakes", label="shape_and_difficulty", title="Mistakes by shape and difficulty"),
-        "val_mistakes_table": wandb.Table(data=mistakes_data,
-                                          columns=['path', 'difficulty', 'shape', 'image', 'prediction', 'label']),
+        # Values below are used for constructing the wandb plots and tables.
+        # They should be deleted after they are used for creating plots and tables, and they should not be logged
+        "val_global_probs": global_probs,
+        "val_global_target": global_target,
+        "val_diff_mistakes": diff_mistakes,
+        "val_shapes_mistakes": shapes_mistakes,
+        "val_shape_diff_mistakes": shape_diff_mistakes,
+        "val_incorrect_img_paths": incorrect_img_paths,
+        "val_incorrect_images": incorrect_images,
+        "val_incorrect_img_predictions": incorrect_img_predictions,
+        "val_incorrect_img_labels": incorrect_img_labels,
     }
     return log_metrics
 
@@ -442,7 +429,7 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
                               job_type="train",
                               # TODO: Add tags as arguments for argparser
                               tags=['variable_max_score'],
-                              name=f'{model_id}_train_max_score_{max_score}',
+                              name=f'{model_id}_train_max_score_{round(float(max_score), 2)}',
                               config=opt,
                               )
 
@@ -472,7 +459,9 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
 
     best_model_f1_macro = -np.Inf
     best_model_path = None
-    artifact = wandb.Artifact(name=f'train-{opt.group}-{model_id}-max_epochs{opt.n_epochs}', type='model')
+    artifact = wandb.Artifact(
+        name=f'train-{opt.group}-{model_id}-max_epochs{opt.n_epochs}-max_metric{round(float(max_score), 2)}',
+        type='model')
 
     try:
         # TODO: Add training resuming. This can be done from the model saved in wandb or from the local model
@@ -485,17 +474,13 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
             # TODO: Add early stopping - Maybe not needed for this experiment. In that case log tables before ending
             last = epoch >= opt.n_epochs or val_metrics['val_f1_macro'] >= max_score
 
-            # TODO: Create these plots and tables only once instead of deleting them every epoch except for last.
-            #  This may be causing problems by creating a huge number of temp files.
-            if not last:
-                del train_metrics["train_confusion_matrix"]
-                del train_metrics["train_roc"]
-                del val_metrics["val_confusion_matrix"]
-                del val_metrics["val_roc"]
-                del val_metrics["val_mistakes_by_diff_bar"]
-                del val_metrics["val_mistakes_table"]
-                del val_metrics["val_mistakes_by_shape_bar"]
-                del val_metrics["val_mistakes_by_shape_diff_bar"]
+            if last:
+                train_metrics.update(create_wandb_train_plots(train_metrics=train_metrics))
+                val_metrics.update(create_wandb_val_plots(val_metrics=val_metrics))
+
+            del_wandb_train_untracked_metrics(train_metrics=train_metrics)
+            del_wandb_val_untracked_metrics(val_metrics=val_metrics)
+
             wandb.log(train_metrics)
             wandb.log(val_metrics)
 
@@ -505,7 +490,7 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
                 Path(f'experiments/{opt.group}').mkdir(exist_ok=True)
                 new_best_path = os.path.join(f'experiments/{opt.group}',
                                              f'train-{opt.group}-{model_id}-max_epochs{opt.n_epochs}-epoch{epoch}'
-                                             f'-max_metric{max_score}'
+                                             f'-max_metric{round(float(max_score), 2)}'
                                              f'-metric{val_metrics["val_f1_macro"]:.4f}.pt')
                 torch.save(model.state_dict(), new_best_path)
                 if best_model_path:
@@ -526,6 +511,7 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
 
     except FileNotFoundError as e:
         wb_run_train.finish()
+        wb_run_train.delete()  # Delete train run if an error has occurred
         print(f"Exception happened for model {model_id}\n {e}")
         return [model_id, *args], {"max_epoch": max_epoch, "max_score": max_score,
                                    **kwargs}, True  # Run Failed is True
@@ -536,7 +522,7 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
                              job_type="eval",
                              # TODO: Replace with tags argument from argparser once its added
                              tags=['variable_max_score'],
-                             name=f'{model_id}_eval_max_score_{max_score}',
+                             name=f'{model_id}_eval_max_score_{round(float(max_score), 2)}',
                              config=opt,
                              )
 
@@ -556,14 +542,91 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
         # pytorch_total_params = sum(p.numel() for p in model.parameters())
         # print(pytorch_total_params)
         eval_metrics = validation(model=model, data_loader=test_loader, opt=opt)
+        eval_metrics.update(create_wandb_val_plots(val_metrics=eval_metrics))
+        del_wandb_val_untracked_metrics(val_metrics=eval_metrics)
         wandb.log(eval_metrics)
         wb_run_eval.finish()
     except FileNotFoundError as e:
         wb_run_eval.finish()
+        wb_run_eval.delete()  # Delete eval run if an error has occurred
+        wb_run_train.delete()  # Delete train run also if an error has occurred
         print(f"Exception happened for model {model_id}\n {e}")
         return [model_id, *args], {"max_epoch": max_epoch, "max_score": max_score,
                                    **kwargs}, True  # Run Failed is True
     return [model_id, *args], {"max_epoch": max_epoch, "max_score": max_score, **kwargs}, False  # Run Failed is False
+
+
+def create_wandb_train_plots(train_metrics):
+    return {
+        "train_confusion_matrix": wandb.plot.confusion_matrix(probs=train_metrics['train_global_probs'],
+                                                              y_true=train_metrics['train_global_target'],
+                                                              class_names=['ellipse', 'square', 'triangle'],
+                                                              title="Train confusion matrix"),
+        "train_roc": wandb.plot.roc_curve(y_true=train_metrics['train_global_target'],
+                                          y_probas=train_metrics['train_global_probs'],
+                                          labels=['ellipse', 'square', 'triangle'],
+                                          # TODO: Determine why classes_to_plot doesn't work with roc
+                                          # classes_to_plot=['ellipse', 'square', 'triangle'],
+                                          title="Train ROC", ),
+    }
+
+
+def create_wandb_val_plots(val_metrics):
+    val_mistakes_data = [[val_metrics["val_incorrect_img_paths"][i], val_metrics["val_diff_mistakes"][i],
+                          val_metrics["val_shapes_mistakes"][i],
+                          wandb.Image(data_or_path=val_metrics["val_incorrect_images"][i],
+                                      caption=val_metrics["val_incorrect_img_paths"][i]),
+                          val_metrics["val_incorrect_img_predictions"][i],
+                          val_metrics["val_incorrect_img_labels"][i]] for i in
+                         range(len(val_metrics["val_incorrect_img_paths"]))]
+    return {
+
+        "val_confusion_matrix": wandb.plot.confusion_matrix(probs=val_metrics["val_global_probs"],
+                                                            y_true=val_metrics["val_global_target"],
+                                                            class_names=['ellipse', 'square', 'triangle'],
+                                                            title="Validation confusion matrix"),
+        "val_roc": wandb.plot.roc_curve(y_true=val_metrics["val_global_target"],
+                                        y_probas=val_metrics["val_global_probs"],
+                                        labels=['ellipse', 'square', 'triangle'],
+                                        # classes_to_plot=['ellipse', 'square', 'triangle'],
+                                        title="Validation ROC", ),
+        "val_mistakes_by_diff_bar": wandb.plot.bar(
+            table=wandb.Table(
+                data=np.asarray([[d, val_metrics["val_diff_mistakes"].count(d)] for d in range(1, 5)]),
+                columns=["difficulty", "mistakes"]),
+            value="mistakes", label="difficulty", title="Mistakes by difficulty"),
+        "val_mistakes_by_shape_bar": wandb.plot.bar(
+            table=wandb.Table(data=np.asarray([[d, val_metrics["val_shapes_mistakes"].count(d)] for d in
+                                               set(val_metrics["val_shapes_mistakes"])]),
+                              columns=["shapes", "mistakes"]),
+            value="mistakes", label="shapes", title="Mistakes by shape"),
+        "val_mistakes_by_shape_diff_bar": wandb.plot.bar(
+            table=wandb.Table(
+                data=np.asarray([[d, val_metrics["val_shape_diff_mistakes"].count(d)] for d in
+                                 set(val_metrics["val_shape_diff_mistakes"])]),
+                columns=["shape_and_difficulty", "mistakes"]),
+            value="mistakes", label="shape_and_difficulty", title="Mistakes by shape and difficulty"),
+        "val_mistakes_table": wandb.Table(data=val_mistakes_data,
+                                          columns=['path', 'difficulty', 'shape', 'image', 'prediction',
+                                                   'label']),
+    }
+
+
+def del_wandb_train_untracked_metrics(train_metrics):
+    del train_metrics["train_global_probs"]
+    del train_metrics["train_global_target"]
+
+
+def del_wandb_val_untracked_metrics(val_metrics):
+    del val_metrics["val_global_probs"]
+    del val_metrics["val_global_target"]
+    del val_metrics["val_diff_mistakes"]
+    del val_metrics["val_shapes_mistakes"]
+    del val_metrics["val_shape_diff_mistakes"]
+    del val_metrics["val_incorrect_img_paths"]
+    del val_metrics["val_incorrect_images"]
+    del val_metrics["val_incorrect_img_predictions"]
+    del val_metrics["val_incorrect_img_labels"]
 
 
 def main():
