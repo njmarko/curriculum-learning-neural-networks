@@ -9,6 +9,7 @@
 # TODO: Useful resource for wandb
 #  https://www.kaggle.com/code/ayuraj/experiment-tracking-with-weights-and-biases?scriptVersionId=63334832&cellId=18
 # TODO: Check the amount of noise that should be added to generated images at higher difficulties. Seems too low now
+# TODO: Add console logging with LOG library instead of prints
 
 import argparse
 import os
@@ -367,27 +368,32 @@ def create_experiments():
         } for i in torch.linspace(opt.min_score, opt.max_score, opt.n_models).long()
     ]
 
-    # TODO: Add exception handling and count the errors where the model made the mistake.
-    #  Also, remember the arguments of the model that made the mistake. This will allow us to repeat the experiments
-    #  that failed, until we manage to train the specified number of models.
-    # TODO: To fix the crashing problem, see if processes can only be created at the start,
-    #  and then they receive the list of parameters they should runs. If we can set the folder where wandb stores its
-    #  temp files for each process, we may evade problems that arise cause of the bad interactions between processes.
-
     if opt.parallel_processes <= 1:
         # It is faster to run the experiments on the main process if only one process should be used
         for f, args, kwargs in zip(functions_iter, args_iter, kwargs_iter):
             _proc_starter(f, args, kwargs)
     else:
+        failed_process_args_kwargs = []
         with mp.Pool(opt.parallel_processes) as pool:
-            pool.starmap(_proc_starter, zip(functions_iter, args_iter, kwargs_iter))
+            for f, ret_args, ret_kwargs, process_failed in pool.starmap(_proc_starter,
+                                                                        zip(functions_iter, args_iter, kwargs_iter)):
+                if process_failed:
+                    failed_process_args_kwargs.append((f, ret_args, ret_kwargs))
+        print(f"Failed models: {len(failed_process_args_kwargs)}.")
+        n_retry_attempts = opt.n_models
+        while failed_process_args_kwargs and n_retry_attempts > 0:
+            val = failed_process_args_kwargs.pop(0)
+            f, ret_args, ret_kwargs, process_failed = _proc_starter(val[0], val[1], val[2])
+            if process_failed:
+                failed_process_args_kwargs.append((f, ret_args, ret_kwargs))
+            n_retry_attempts -= 1
 
 
 def _proc_starter(f, args, kwargs):
-    f(*args, **kwargs)
+    return f, *f(*args, **kwargs)
 
 
-def run_experiment(model_id, max_epoch=100, max_score=1):
+def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
     # Model options
     model_choices = {CnnV1.__name__.lower(): CnnV1, }  # TODO: Add more model choices
 
@@ -447,6 +453,8 @@ def run_experiment(model_id, max_epoch=100, max_score=1):
     model = model.to(opt.device)
 
     # TODO: Optimize hyper-params with WandB Sweeper
+    # TODO: Check what params were used for AdamW in the paper that achieved similar performance to SGD with momentum
+    #  on ImageNet. Also check if they used LSScheduler with AdamW.
 
     optimizer = optimizer_choices[opt.optimizer](params=model.parameters(), lr=opt.learning_rate,
                                                  weight_decay=opt.weight_decay)
@@ -464,81 +472,87 @@ def run_experiment(model_id, max_epoch=100, max_score=1):
     best_model_path = None
     artifact = wandb.Artifact(name=f'train-{opt.group}-{model_id}-max_epochs{opt.n_epochs}', type='model')
 
-    # TODO: Add training resuming. This can be done from the model saved in wandb or from the local model
-    for epoch in range(1, opt.n_epochs + 1):
-        print(f"{epoch=}")
-        train_metrics = train(model=model, optimizer=optimizer, data_loader=train_loader, opt=opt,
-                              scheduler=scheduler)
-        val_metrics = validation(model=model, data_loader=val_loader, opt=opt)
+    try:
+        # TODO: Add training resuming. This can be done from the model saved in wandb or from the local model
+        for epoch in range(1, opt.n_epochs + 1):
+            print(f"{epoch=}")
+            train_metrics = train(model=model, optimizer=optimizer, data_loader=train_loader, opt=opt,
+                                  scheduler=scheduler)
+            val_metrics = validation(model=model, data_loader=val_loader, opt=opt)
 
-        # TODO: Add early stopping - Maybe not needed for this experiment. In that case log tables before ending
-        last = epoch >= opt.n_epochs or val_metrics['val_f1_macro'] >= max_score
+            # TODO: Add early stopping - Maybe not needed for this experiment. In that case log tables before ending
+            last = epoch >= opt.n_epochs or val_metrics['val_f1_macro'] >= max_score
 
-        if not last:
-            del train_metrics["train_confusion_matrix"]
-            del train_metrics["train_roc"]
-            del val_metrics["val_confusion_matrix"]
-            del val_metrics["val_roc"]
-            del val_metrics["val_mistakes_by_diff_bar"]
-            del val_metrics["val_mistakes_table"]
-            del val_metrics["val_mistakes_by_shape_bar"]
-            del val_metrics["val_mistakes_by_shape_diff_bar"]
-        wandb.log(train_metrics)
-        wandb.log(val_metrics)
+            if not last:
+                del train_metrics["train_confusion_matrix"]
+                del train_metrics["train_roc"]
+                del val_metrics["val_confusion_matrix"]
+                del val_metrics["val_roc"]
+                del val_metrics["val_mistakes_by_diff_bar"]
+                del val_metrics["val_mistakes_table"]
+                del val_metrics["val_mistakes_by_shape_bar"]
+                del val_metrics["val_mistakes_by_shape_diff_bar"]
+            wandb.log(train_metrics)
+            wandb.log(val_metrics)
 
-        if val_metrics['val_f1_macro'] > best_model_f1_macro:
-            print(f"Saving model with new best {val_metrics['val_f1_macro']=}")
-            best_model_f1_macro, best_epoch = val_metrics['val_f1_macro'], epoch
-            Path(f'experiments/{opt.group}').mkdir(exist_ok=True)
-            new_best_path = os.path.join(f'experiments/{opt.group}',
-                                         f'train-{opt.group}-{model_id}-max_epochs{opt.n_epochs}-epoch{epoch}'
-                                         f'-max_metric{max_score}'
-                                         f'-metric{val_metrics["val_f1_macro"]:.4f}.pt')
-            torch.save(model.state_dict(), new_best_path)
-            if best_model_path:
-                os.remove(best_model_path)
-            best_model_path = new_best_path
+            if val_metrics['val_f1_macro'] > best_model_f1_macro:
+                print(f"Saving model with new best {val_metrics['val_f1_macro']=}")
+                best_model_f1_macro, best_epoch = val_metrics['val_f1_macro'], epoch
+                Path(f'experiments/{opt.group}').mkdir(exist_ok=True)
+                new_best_path = os.path.join(f'experiments/{opt.group}',
+                                             f'train-{opt.group}-{model_id}-max_epochs{opt.n_epochs}-epoch{epoch}'
+                                             f'-max_metric{max_score}'
+                                             f'-metric{val_metrics["val_f1_macro"]:.4f}.pt')
+                torch.save(model.state_dict(), new_best_path)
+                if best_model_path:
+                    os.remove(best_model_path)
+                best_model_path = new_best_path
 
-        if last:
-            print(
-                f"Finished training a {model_id=} with {max_epoch=} and {max_score=} "
-                f"with va_f1_macro {val_metrics['val_f1_macro']}")
-            break
+            if last:
+                print(
+                    f"Finished training a {model_id=} with {max_epoch=} and {max_score=} "
+                    f"with va_f1_macro {val_metrics['val_f1_macro']}")
+                break
 
-    if opt.save_model_wandb:
-        artifact.add_file(best_model_path)
-        wb_run_train.log_artifact(artifact)
+        if opt.save_model_wandb:
+            artifact.add_file(best_model_path)
+            wb_run_train.log_artifact(artifact)
 
-    wb_run_train.finish()
+        wb_run_train.finish()
 
-    # Test loading
-    wb_run_eval = wandb.init(entity=opt.entity, project=opt.project_name, group=opt.group,
-                             # save_code=True, # Pycharm complains about duplicate code fragments
-                             job_type="eval",
-                             # TODO: Replace with tags argument from argparser once its added
-                             tags=['variable_max_score'],
-                             name=f'{model_id}_eval_max_score_{max_score}',
-                             config=opt,
-                             )
+        # Test loading
+        wb_run_eval = wandb.init(entity=opt.entity, project=opt.project_name, group=opt.group,
+                                 # save_code=True, # Pycharm complains about duplicate code fragments
+                                 job_type="eval",
+                                 # TODO: Replace with tags argument from argparser once its added
+                                 tags=['variable_max_score'],
+                                 name=f'{model_id}_eval_max_score_{max_score}',
+                                 config=opt,
+                                 )
 
-    model = model_choices[opt.model](depth=opt.depth, in_channels=opt.in_channels, out_channels=opt.out_channels,
-                                     kernel_dim=opt.kernel_dim, mlp_dim=opt.mlp_dim, padding=opt.padding,
-                                     stride=opt.stride, max_pool=opt.max_pool,
-                                     dropout=opt.dropout)
-    # TODO: Load model from wandb for the current run
-    model.load_state_dict(torch.load(best_model_path))
-    model.to(opt.device)
+        model = model_choices[opt.model](depth=opt.depth, in_channels=opt.in_channels, out_channels=opt.out_channels,
+                                         kernel_dim=opt.kernel_dim, mlp_dim=opt.mlp_dim, padding=opt.padding,
+                                         stride=opt.stride, max_pool=opt.max_pool,
+                                         dropout=opt.dropout)
+        # TODO: Load model from wandb for the current run
+        model.load_state_dict(torch.load(best_model_path))
+        model.to(opt.device)
 
-    # TODO: Create a new helper function that returns the number of model parameters
-    # TODO: Also save number of parameters for the model in the wandb config
-    # TODO: Save a model architecture that was used. This should include the layer information,
-    #  similarly to how torch returns the architecture.
-    #  Maybe even as an image if it can be visualized with some library
-    # pytorch_total_params = sum(p.numel() for p in model.parameters())
-    # print(pytorch_total_params)
-    eval_metrics = validation(model=model, data_loader=test_loader, opt=opt)
-    wandb.log(eval_metrics)
-    wb_run_eval.finish()
+        # TODO: Create a new helper function that returns the number of model parameters
+        # TODO: Also save number of parameters for the model in the wandb config
+        # TODO: Save a model architecture that was used. This should include the layer information,
+        #  similarly to how torch returns the architecture.
+        #  Maybe even as an image if it can be visualized with some library
+        # pytorch_total_params = sum(p.numel() for p in model.parameters())
+        # print(pytorch_total_params)
+        eval_metrics = validation(model=model, data_loader=test_loader, opt=opt)
+        wandb.log(eval_metrics)
+        wb_run_eval.finish()
+    except FileNotFoundError as e:
+        print(f"Exception happened for model {model_id}\n {e}")
+        return [model_id, *args], {"max_epoch": max_epoch, "max_score": max_score,
+                                   **kwargs}, True  # Run Failed is True
+    return [model_id, *args], {"max_epoch": max_epoch, "max_score": max_score, **kwargs}, False  # Run Failed is False
 
 
 def main():
