@@ -572,14 +572,13 @@ def create_wandb_train_plots(train_metrics):
 
 
 def create_wandb_val_plots(val_metrics, save_images=False):
-    if save_images:
-        val_mistakes_data = [[val_metrics["val_incorrect_img_paths"][i], val_metrics["val_diff_mistakes"][i],
-                              val_metrics["val_shapes_mistakes"][i],
-                              wandb.Image(data_or_path=val_metrics["val_incorrect_images"][i],
-                                          caption=val_metrics["val_incorrect_img_paths"][i]) if save_images else None,
-                              val_metrics["val_incorrect_img_predictions"][i],
-                              val_metrics["val_incorrect_img_labels"][i]] for i in
-                             range(len(val_metrics["val_incorrect_img_paths"]))]
+    val_mistakes_data = [[val_metrics["val_incorrect_img_paths"][i], val_metrics["val_diff_mistakes"][i],
+                          val_metrics["val_shapes_mistakes"][i],
+                          wandb.Image(data_or_path=val_metrics["val_incorrect_images"][i],
+                                      caption=val_metrics["val_incorrect_img_paths"][i]) if save_images else None,
+                          val_metrics["val_incorrect_img_predictions"][i],
+                          val_metrics["val_incorrect_img_labels"][i]] for i in
+                         range(len(val_metrics["val_incorrect_img_paths"]))]
     return {
 
         "val_confusion_matrix": wandb.plot.confusion_matrix(probs=val_metrics["val_global_probs"],
