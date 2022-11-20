@@ -367,6 +367,13 @@ def create_experiments():
         } for i in torch.linspace(opt.min_score, opt.max_score, opt.n_models).long()
     ]
 
+    # TODO: Add exception handling and count the errors where the model made the mistake.
+    #  Also, remember the arguments of the model that made the mistake. This will allow us to repeat the experiments
+    #  that failed, until we manage to train the specified number of models.
+    # TODO: To fix the crashing problem, see if processes can only be created at the start,
+    #  and then they receive the list of parameters they should runs. If we can set the folder where wandb stores its
+    #  temp files for each process, we may evade problems that arise cause of the bad interactions between processes.
+
     if opt.parallel_processes <= 1:
         # It is faster to run the experiments on the main process if only one process should be used
         for f, args, kwargs in zip(functions_iter, args_iter, kwargs_iter):
