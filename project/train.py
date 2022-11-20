@@ -553,6 +553,10 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
         print(f"Exception happened for model {model_id}\n {e}")
         return [model_id, *args], {"max_epoch": max_epoch, "max_score": max_score,
                                    **kwargs}, True  # Run Failed is True
+    try:
+        os.system("wandb sync --clean --clean-old-hours 1 --clean-force")
+    except:
+        print("System failed to clean wandb files.")
     return [model_id, *args], {"max_epoch": max_epoch, "max_score": max_score, **kwargs}, False  # Run Failed is False
 
 
