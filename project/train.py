@@ -380,6 +380,8 @@ def create_experiments():
                 if process_failed:
                     failed_process_args_kwargs.append((f, ret_args, ret_kwargs))
         print(f"Failed models: {len(failed_process_args_kwargs)}.")
+        for f in failed_process_args_kwargs:
+            print(f"Failed model: {f[1][0]}")
         n_retry_attempts = opt.n_models
         while failed_process_args_kwargs and n_retry_attempts > 0:
             val = failed_process_args_kwargs.pop(0)
@@ -483,6 +485,8 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
             # TODO: Add early stopping - Maybe not needed for this experiment. In that case log tables before ending
             last = epoch >= opt.n_epochs or val_metrics['val_f1_macro'] >= max_score
 
+            # TODO: Create these plots and tables only once instead of deleting them every epoch except for last.
+            #  This may be causing problems by creating a huge number of temp files.
             if not last:
                 del train_metrics["train_confusion_matrix"]
                 del train_metrics["train_roc"]
@@ -520,24 +524,30 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
 
         wb_run_train.finish()
 
-        # Test loading
-        wb_run_eval = wandb.init(entity=opt.entity, project=opt.project_name, group=opt.group,
-                                 # save_code=True, # Pycharm complains about duplicate code fragments
-                                 job_type="eval",
-                                 # TODO: Replace with tags argument from argparser once its added
-                                 tags=['variable_max_score'],
-                                 name=f'{model_id}_eval_max_score_{max_score}',
-                                 config=opt,
-                                 )
+    except FileNotFoundError as e:
+        wb_run_train.finish()
+        print(f"Exception happened for model {model_id}\n {e}")
+        return [model_id, *args], {"max_epoch": max_epoch, "max_score": max_score,
+                                   **kwargs}, True  # Run Failed is True
 
-        model = model_choices[opt.model](depth=opt.depth, in_channels=opt.in_channels, out_channels=opt.out_channels,
-                                         kernel_dim=opt.kernel_dim, mlp_dim=opt.mlp_dim, padding=opt.padding,
-                                         stride=opt.stride, max_pool=opt.max_pool,
-                                         dropout=opt.dropout)
-        # TODO: Load model from wandb for the current run
-        model.load_state_dict(torch.load(best_model_path))
-        model.to(opt.device)
+    # Test loading
+    wb_run_eval = wandb.init(entity=opt.entity, project=opt.project_name, group=opt.group,
+                             # save_code=True, # Pycharm complains about duplicate code fragments
+                             job_type="eval",
+                             # TODO: Replace with tags argument from argparser once its added
+                             tags=['variable_max_score'],
+                             name=f'{model_id}_eval_max_score_{max_score}',
+                             config=opt,
+                             )
 
+    model = model_choices[opt.model](depth=opt.depth, in_channels=opt.in_channels, out_channels=opt.out_channels,
+                                     kernel_dim=opt.kernel_dim, mlp_dim=opt.mlp_dim, padding=opt.padding,
+                                     stride=opt.stride, max_pool=opt.max_pool,
+                                     dropout=opt.dropout)
+    # TODO: Load model from wandb for the current run
+    model.load_state_dict(torch.load(best_model_path))
+    model.to(opt.device)
+    try:
         # TODO: Create a new helper function that returns the number of model parameters
         # TODO: Also save number of parameters for the model in the wandb config
         # TODO: Save a model architecture that was used. This should include the layer information,
@@ -549,6 +559,7 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
         wandb.log(eval_metrics)
         wb_run_eval.finish()
     except FileNotFoundError as e:
+        wb_run_eval.finish()
         print(f"Exception happened for model {model_id}\n {e}")
         return [model_id, *args], {"max_epoch": max_epoch, "max_score": max_score,
                                    **kwargs}, True  # Run Failed is True
