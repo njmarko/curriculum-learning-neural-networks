@@ -10,6 +10,8 @@
 #  https://www.kaggle.com/code/ayuraj/experiment-tracking-with-weights-and-biases?scriptVersionId=63334832&cellId=18
 # TODO: Check the amount of noise that should be added to generated images at higher difficulties. Seems too low now
 # TODO: Add console logging with LOG library instead of prints
+# TODO: Add GRAD-CAM visualization for CNN and other types of visualizations
+#  https://github.com/utkuozbulak/pytorch-cnn-visualizations
 
 import argparse
 import os
@@ -553,10 +555,7 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
         print(f"Exception happened for model {model_id}\n {e}")
         return [model_id, *args], {"max_epoch": max_epoch, "max_score": max_score,
                                    **kwargs}, True  # Run Failed is True
-    try:
-        os.system("wandb sync --clean --clean-old-hours 1 --clean-force")
-    except:
-        print("System failed to clean wandb files.")
+    # TODO: Add our own code for removing models from the wandb folder during training.
     return [model_id, *args], {"max_epoch": max_epoch, "max_score": max_score, **kwargs}, False  # Run Failed is False
 
 
