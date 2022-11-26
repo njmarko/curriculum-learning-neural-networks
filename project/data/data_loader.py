@@ -43,4 +43,4 @@ def load_dataset_iita(base_dir):
         transforms.ToTensor(),
     ])
     dataset = ImageFolderWithPaths(root=base_dir, transform=transform)
-    return DataLoader(dataset)
+    return DataLoader(dataset, batch_size=1)
