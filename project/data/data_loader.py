@@ -36,3 +36,11 @@ def load_dataset(base_dir, lengths=None, batch_size=64, shuffle=True, num_worker
         num_workers=num_workers, pin_memory=pin_memory, worker_init_fn=seed_worker
     ), data_splits)
     return data_loaders
+
+def load_dataset_iita(base_dir):
+    transform = transforms.Compose([
+        transforms.Grayscale(),
+        transforms.ToTensor(),
+    ])
+    dataset = ImageFolderWithPaths(root=base_dir, transform=transform)
+    return DataLoader(dataset)

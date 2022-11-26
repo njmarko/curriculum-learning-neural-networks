@@ -426,6 +426,10 @@ def generate_by_difficulty(dataset_size=250, path_folder="generated_images/datas
     print(f"Total errors {total_errors}\nTotal time in ellipse errors {error_time}")
 
 
+def generate_iita_dataset():
+    generate_dataset(12, 'generated_images/iita_dataset/')
+
+
 def main():
     # img = np.zeros((IMG_DIM, IMG_DIM), dtype='uint8')
 
@@ -459,8 +463,9 @@ def main():
     #
     # cv2.destroyAllWindows()
     # generate_dataset(DATASET_SIZE, DATASET_BASE_DIR)
-    for i in range(1, 5):
-        generate_by_difficulty(30, ".\\generated_images\\dataset2\\", i)
+    generate_iita_dataset()
+    # for i in range(1, 5):
+    #     generate_by_difficulty(30, ".\\generated_images\\dataset2\\", i)
     # train, test = load_dataset(DATASET_BASE_DIR)
 
 
