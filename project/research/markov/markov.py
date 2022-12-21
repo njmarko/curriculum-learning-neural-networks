@@ -1,6 +1,7 @@
 from torch import optim
 
 from models.cnn_v1 import CnnV1
+from research.markov.stochastic_markov import stochastic_markov
 from train import create_arg_parser
 
 
@@ -23,6 +24,12 @@ def main():
                                      kernel_dim=opt.kernel_dim, mlp_dim=opt.mlp_dim, padding=opt.padding,
                                      stride=opt.stride, max_pool=opt.max_pool,
                                      dropout=opt.dropout)
+
+    # TODO: How to choose initial state probabilities?
+    states = {'a': 0.125, ('a', 'b'): 0.25, 'b': 0.125, ('a', 'b', 'c'): 0.5}
+    data_path = "../../data/generated_images/dataset3"
+    stochastic_markov(states, model, data_path)
+
 
 if __name__ == "__main__":
     main()
