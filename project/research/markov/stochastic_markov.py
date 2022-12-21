@@ -6,6 +6,8 @@ import random
 from typing import Tuple
 
 import numpy as np
+import torch
+import torch.nn.functional as F
 
 
 def _array2dict_vals(array: np.ndarray, dict: dict):
@@ -27,13 +29,22 @@ def _likeliest_state(states: dict[Tuple[str], float]) -> Tuple[Tuple[str], float
     return max(states.items(), key=operator.itemgetter(1))
 
 
-def _take_answer(question: str, model=None, data_path: str = None) -> bool:
+def _take_answer(question: str, model=None, data_path: str = None, opt=None) -> bool:
     print(f'{question}: correct/incorrect? [1/0]')
     # TODO: Get the question image and see if model can predict it correctly
     #  Example: Let the question be triangle_diff1.
     #  First randomly select an image that has the same shape and difficulty.
     #  After that, use the model to try to predict what shape is on that image.
     #  Return true or false based on the prediction
+
+    # data, target, path = load_image_by_shape_and_difficulty(question, data_path)
+    # data = data.to(opt.device)
+    # target = target.to(opt.device)
+    # res = model(data)
+    # probs = F.softmax(res, dim=1)
+    # probs = probs.to(opt.device)
+    # _, pred = torch.max(probs, dim=1)
+    # return pred == target
     return int(input()) == 1
 
 
@@ -89,12 +100,12 @@ def final_state(states: dict[Tuple[str], float]):
 
 
 def stochastic_markov(states: dict[Tuple[str] | Tuple[str, str] | Tuple[str, str, str], float],
-                      model=None, data_path=None) -> Tuple[str]:
+                      model=None, data_path=None, opt=None) -> Tuple[str]:
     max_iter = 100
     for _ in range(max_iter):
         question = questioning_rule(states)
         r = response_rule(question, states)
-        answer_correct = _take_answer(question, model, data_path)
+        answer_correct = _take_answer(question, model, data_path, opt)
         updating_rule(question, answer_correct, r, states)
         print(states)
         final = final_state(states)

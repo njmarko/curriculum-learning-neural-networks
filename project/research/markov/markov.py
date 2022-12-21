@@ -34,12 +34,13 @@ def main():
 
     model.load_state_dict(torch.load(opt.used_model_path))
     model.to(opt.device)
+    model.eval()
 
     # TODO: How to choose initial state probabilities?
     states = {'triangle_diff1': 0.125, ('triangle_diff1', 'square_diff1'): 0.25, 'square_diff1': 0.125,
               ('triangle_diff1', 'square_diff1', 'ellipse_diff1'): 0.5}
     data_path = opt.dataset
-    stochastic_markov(states, model, data_path)
+    stochastic_markov(states, model, data_path, opt)
 
 
 if __name__ == "__main__":
