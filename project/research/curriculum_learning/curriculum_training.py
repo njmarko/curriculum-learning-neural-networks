@@ -1,25 +1,17 @@
-import argparse
 import os
-import random
-import re
-import timeit
-from itertools import cycle, islice, repeat
+from itertools import repeat
 from pathlib import Path
 
-import cv2
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.multiprocessing as mp
-import torch.nn.functional as F
 from torch import optim
-from torchmetrics import MetricCollection
-from torchmetrics.classification import MulticlassF1Score, MulticlassPrecision, MulticlassRecall, MulticlassAUROC
 
 import wandb
-from data.data_loader import load_dataset, load_dataset_curriculum
+from data.data_loader import load_dataset_curriculum
 from models.cnn_v1 import CnnV1
-from train import train, validation, set_seed, create_arg_parser
+from train import train, validation, set_seed, create_arg_parser, create_wandb_val_plots, \
+    del_wandb_val_untracked_metrics, del_wandb_train_untracked_metrics, create_wandb_train_plots
 
 
 def create_experiments():
@@ -92,9 +84,11 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
     parser = create_arg_parser(model_choices=model_choices, optimizer_choices=optimizer_choices,
                                scheduler_choices=scheduler_choices)
     # Parser option specific for this experiment
-    parser.add_argument('-initial_p', '--initial_p', type=float, default=0.8,
+    parser.add_argument('-initial_p', '--initial_p', type=float, default=0.7,
                         help="Initial probability for geometric distribution for experiment with "
                              "curriculum learning that uses weighted random sampler")
+    parser.add_argument('-epoch_per_curriculum', '--epoch_per_curriculum', type=int, default=4,
+                        help="How many epochs to train before switching to a new curriculum")
     opt = parser.parse_args()
 
     if opt.seed_everything >= 0:
@@ -189,7 +183,7 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
             print(f"{epoch=}")
 
             # TODO: Change dataloader to use different weights based on passed epochs
-            if epoch % 3 == 0:
+            if epoch % opt.epoch_per_curriculum == 0:
                 selected_p = p_values[min(epoch // 3 - 1, len(p_values) - 1)]
                 p = [selected_p * (1 - selected_p) ** i for i in range(6)]
                 train_loader, val_loader, test_loader = load_dataset_curriculum(base_dir=opt.dataset,
@@ -293,79 +287,6 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
                                    **kwargs}, True  # Run Failed is True
     # TODO: Add our own code for removing models from the wandb folder during training.
     return [model_id, *args], {"max_epoch": max_epoch, "max_score": max_score, **kwargs}, False  # Run Failed is False
-
-
-def create_wandb_train_plots(train_metrics):
-    return {
-        "train_confusion_matrix": wandb.plot.confusion_matrix(probs=train_metrics['train_global_probs'],
-                                                              y_true=train_metrics['train_global_target'],
-                                                              class_names=['ellipse', 'square', 'triangle'],
-                                                              title="Train confusion matrix"),
-        "train_roc": wandb.plot.roc_curve(y_true=train_metrics['train_global_target'],
-                                          y_probas=train_metrics['train_global_probs'],
-                                          labels=['ellipse', 'square', 'triangle'],
-                                          # TODO: Determine why classes_to_plot doesn't work with roc
-                                          # classes_to_plot=['ellipse', 'square', 'triangle'],
-                                          title="Train ROC", ),
-    }
-
-
-def create_wandb_val_plots(val_metrics, save_images=False):
-    val_mistakes_data = [[val_metrics["val_incorrect_img_paths"][i], val_metrics["val_diff_mistakes"][i],
-                          val_metrics["val_shapes_mistakes"][i],
-                          wandb.Image(data_or_path=val_metrics["val_incorrect_images"][i],
-                                      caption=val_metrics["val_incorrect_img_paths"][i]) if save_images else None,
-                          val_metrics["val_incorrect_img_predictions"][i],
-                          val_metrics["val_incorrect_img_labels"][i]] for i in
-                         range(len(val_metrics["val_incorrect_img_paths"]))]
-    return {
-
-        "val_confusion_matrix": wandb.plot.confusion_matrix(probs=val_metrics["val_global_probs"],
-                                                            y_true=val_metrics["val_global_target"],
-                                                            class_names=['ellipse', 'square', 'triangle'],
-                                                            title="Validation confusion matrix"),
-        "val_roc": wandb.plot.roc_curve(y_true=val_metrics["val_global_target"],
-                                        y_probas=val_metrics["val_global_probs"],
-                                        labels=['ellipse', 'square', 'triangle'],
-                                        # classes_to_plot=['ellipse', 'square', 'triangle'],
-                                        title="Validation ROC", ),
-        "val_mistakes_by_diff_bar": wandb.plot.bar(
-            table=wandb.Table(
-                data=np.asarray([[d, val_metrics["val_diff_mistakes"].count(d)] for d in range(1, 5)]),
-                columns=["difficulty", "mistakes"]),
-            value="mistakes", label="difficulty", title="Mistakes by difficulty"),
-        "val_mistakes_by_shape_bar": wandb.plot.bar(
-            table=wandb.Table(data=np.asarray([[d, val_metrics["val_shapes_mistakes"].count(d)] for d in
-                                               set(val_metrics["val_shapes_mistakes"])]),
-                              columns=["shapes", "mistakes"]),
-            value="mistakes", label="shapes", title="Mistakes by shape"),
-        "val_mistakes_by_shape_diff_bar": wandb.plot.bar(
-            table=wandb.Table(
-                data=np.asarray([[d, val_metrics["val_shape_diff_mistakes"].count(d)] for d in
-                                 set(val_metrics["val_shape_diff_mistakes"])]),
-                columns=["shape_and_difficulty", "mistakes"]),
-            value="mistakes", label="shape_and_difficulty", title="Mistakes by shape and difficulty"),
-        "val_mistakes_table": wandb.Table(data=val_mistakes_data,
-                                          columns=['path', 'difficulty', 'shape', 'image', 'prediction',
-                                                   'label']),
-    }
-
-
-def del_wandb_train_untracked_metrics(train_metrics):
-    del train_metrics["train_global_probs"]
-    del train_metrics["train_global_target"]
-
-
-def del_wandb_val_untracked_metrics(val_metrics):
-    val_metrics.pop("val_global_probs", None)
-    val_metrics.pop("val_global_target", None)
-    val_metrics.pop("val_diff_mistakes", None)
-    val_metrics.pop("val_shapes_mistakes", None)
-    val_metrics.pop("val_shape_diff_mistakes", None)
-    val_metrics.pop("val_incorrect_img_paths", None)
-    val_metrics.pop("val_incorrect_images", None)
-    val_metrics.pop("val_incorrect_img_predictions", None)
-    val_metrics.pop("val_incorrect_img_labels", None)
 
 
 def main():
