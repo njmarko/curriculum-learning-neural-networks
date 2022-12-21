@@ -218,6 +218,8 @@ def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choi
                              "separately under a different type.")
     parser.add_argument('-save_model_wandb', '--save_model_wandb', type=bool, default=True,
                         help="Save best model to wandb run.")
+    parser.add_argument('-job_type', '--job_type', type=str, default="train",
+                        help="Job type {train, eval}.")
 
     # Dataset options
     parser.add_argument('-d', '--dataset', type=str, default="data/generated_images/dataset3",
@@ -428,7 +430,7 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
 
     wb_run_train = wandb.init(entity=opt.entity, project=opt.project_name, group=opt.group,
                               # save_code=True, # Pycharm complains about duplicate code fragments
-                              job_type="train",
+                              job_type=opt.job_type,
                               # TODO: Add tags as arguments for argparser
                               tags=['variable_max_score'],
                               name=f'{model_id}_train_max_score_{round(float(max_score), 2)}',
@@ -462,7 +464,7 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
     best_model_f1_macro = -np.Inf
     best_model_path = None
     artifact = wandb.Artifact(
-        name=f'train-{opt.group}-{model_id}-max_epochs{opt.n_epochs}-max_metric{round(float(max_score), 2)}',
+        name=f'{model_id}.pt',
         type='model')
 
     try:
@@ -513,15 +515,16 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
 
     except FileNotFoundError as e:
         wb_run_train.finish()
-        wb_run_train.delete()  # Delete train run if an error has occurred
+        # wb_run_train.delete()  # Delete train run if an error has occurred
         print(f"Exception happened for model {model_id}\n {e}")
         return [model_id, *args], {"max_epoch": max_epoch, "max_score": max_score,
                                    **kwargs}, True  # Run Failed is True
 
     # Test loading
+    opt.job_type = "eval"
     wb_run_eval = wandb.init(entity=opt.entity, project=opt.project_name, group=opt.group,
                              # save_code=True, # Pycharm complains about duplicate code fragments
-                             job_type="eval",
+                             job_type=opt.job_type,
                              # TODO: Replace with tags argument from argparser once its added
                              tags=['variable_max_score'],
                              name=f'{model_id}_eval_max_score_{round(float(max_score), 2)}',
@@ -550,8 +553,8 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
         wb_run_eval.finish()
     except FileNotFoundError as e:
         wb_run_eval.finish()
-        wb_run_eval.delete()  # Delete eval run if an error has occurred
-        wb_run_train.delete()  # Delete train run also if an error has occurred
+        # wb_run_eval.delete()  # Delete eval run if an error has occurred
+        # wb_run_train.delete()  # Delete train run also if an error has occurred
         print(f"Exception happened for model {model_id}\n {e}")
         return [model_id, *args], {"max_epoch": max_epoch, "max_score": max_score,
                                    **kwargs}, True  # Run Failed is True
@@ -634,6 +637,14 @@ def del_wandb_val_untracked_metrics(val_metrics):
 
 def main():
     create_experiments()
+
+    # A way to get runs from the wandb api
+    # runs = wandb.Api().runs("weird-ai-yankovic/curriculum_learning",
+    #                         filters={"config.group": "variable_max_score_v3",
+    #                                  "jobType": "train"
+    #                                  },
+    #                         per_page=1000,
+    #                         )
 
 
 if __name__ == "__main__":
