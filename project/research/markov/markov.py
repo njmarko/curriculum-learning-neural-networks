@@ -26,7 +26,8 @@ def main():
                                      dropout=opt.dropout)
 
     # TODO: How to choose initial state probabilities?
-    states = {'a': 0.125, ('a', 'b'): 0.25, 'b': 0.125, ('a', 'b', 'c'): 0.5}
+    states = {'triangle_diff1': 0.125, ('triangle_diff1', 'square_diff1'): 0.25, 'square_diff1': 0.125,
+              ('triangle_diff1', 'square_diff1', 'ellipse_diff1'): 0.5}
     data_path = "../../data/generated_images/dataset3"
     stochastic_markov(states, model, data_path)
 
