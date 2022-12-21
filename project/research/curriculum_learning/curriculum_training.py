@@ -84,10 +84,10 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
     parser = create_arg_parser(model_choices=model_choices, optimizer_choices=optimizer_choices,
                                scheduler_choices=scheduler_choices)
     # Parser option specific for this experiment
-    parser.add_argument('-initial_p', '--initial_p', type=float, default=0.7,
+    parser.add_argument('-initial_p', '--initial_p', type=float, default=0.8,
                         help="Initial probability for geometric distribution for experiment with "
                              "curriculum learning that uses weighted random sampler")
-    parser.add_argument('-epoch_per_curriculum', '--epoch_per_curriculum', type=int, default=4,
+    parser.add_argument('-epoch_per_curriculum', '--epoch_per_curriculum', type=int, default=1,
                         help="How many epochs to train before switching to a new curriculum")
     opt = parser.parse_args()
 
@@ -182,9 +182,8 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
         for epoch in range(1, opt.n_epochs + 1):
             print(f"{epoch=}")
 
-            # TODO: Change dataloader to use different weights based on passed epochs
             if epoch % opt.epoch_per_curriculum == 0:
-                selected_p = p_values[min(epoch // 3 - 1, len(p_values) - 1)]
+                selected_p = p_values[min(epoch // opt.epoch_per_curriculum - 1, len(p_values) - 1)]
                 p = [selected_p * (1 - selected_p) ** i for i in range(6)]
                 train_loader, val_loader, test_loader = load_dataset_curriculum(base_dir=opt.dataset,
                                                                                 batch_size=opt.batch_size,
