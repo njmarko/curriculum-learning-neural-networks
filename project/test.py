@@ -151,9 +151,18 @@ def prepare_iita():
 def run_iita():
     knowledge_table = prepare_iita()
     knowledge_table_df = pd.DataFrame(knowledge_table)
+    column_names = knowledge_table_df.columns.values.tolist()
+    print(column_names)
 
     response = iita(knowledge_table_df, v=3)
     print(response)
+    with open('iita_results.txt', 'w') as outfile:
+        outfile.write(response.__repr__())
+    with open('iita_results_graph.txt', 'w') as outfile:
+        outfile.write(response['implications'].__repr__())
+    with open('formatted_iita_graph.txt', 'w') as outfile:
+        for pair in response['implications']:
+            outfile.write(f'{column_names[pair[0]]} {column_names[pair[1]]}\n')
     # response_json = json.dumps(response, indent=4)
  
     # with open("iita_results.json", "w") as outfile:
