@@ -74,3 +74,18 @@ def load_dataset_curriculum(base_dir, p, knowledge_hierarchy, lengths=None, batc
         num_workers=num_workers, pin_memory=pin_memory, worker_init_fn=seed_worker, sampler=sampler
     ), data_splits, samplers)
     return data_loaders
+
+
+def load_image_by_shape_difficulty(dataset, shape, difficulty):
+    images = dataset.imgs
+    candidates = [
+        i for i, image in enumerate(images) if shape in image[0] and f'diff{difficulty}' in image[0]
+    ]
+
+    selected_candidate_idx = random.choice(candidates)
+    selected_candidate = dataset[selected_candidate_idx]  # a tuple of shape (data, target, path)
+
+    return selected_candidate
+
+
+load_image_by_shape_difficulty('', 'square', 1)

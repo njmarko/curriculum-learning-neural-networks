@@ -252,7 +252,7 @@ def create_arg_parser(model_choices=None, optimizer_choices=None, scheduler_choi
 
     # Training options
     parser.add_argument('-device', '--device', type=str, default='cuda', help="Device to be used")
-    parser.add_argument('-e', '--n_epochs', type=int, default=20, help="Max number of epochs for the current model")
+    parser.add_argument('-e', '--n_epochs', type=int, default=50, help="Max number of epochs for the current model")
     parser.add_argument('-max_e', '--max_epochs', type=int, default=20, help="Maximum number of epochs for all models")
     parser.add_argument('-min_e', '--min_epochs', type=int, default=5, help="Minimum number of epochs for all models")
     parser.add_argument('-nm', '--n_models', type=int, default=50, help="Number of models to be trained")

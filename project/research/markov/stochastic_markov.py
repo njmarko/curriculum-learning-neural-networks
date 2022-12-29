@@ -8,6 +8,9 @@ from typing import Tuple
 import numpy as np
 import torch
 import torch.nn.functional as F
+from torchvision import transforms
+
+from data.data_loader import load_image_by_shape_difficulty, ImageFolderWithPaths
 
 
 def _array2dict_vals(array: np.ndarray, dict: dict):
@@ -15,21 +18,21 @@ def _array2dict_vals(array: np.ndarray, dict: dict):
         dict[key] = array[i]
 
 
-def _scale_probabilites(states: dict[Tuple[str], float]):
-    probabilites = np.array(list(states.values()))
-    probabilites /= sum(probabilites)
-    _array2dict_vals(probabilites, states)
+def _scale_probabilities(states: dict[Tuple[str], float]):
+    probabilities = np.array(list(states.values()))
+    probabilities /= sum(probabilities)
+    _array2dict_vals(probabilities, states)
 
 
 def _likeliest_state(states: dict[Tuple[str], float]) -> Tuple[Tuple[str], float]:
     """
-    Returns likeliest state and its probability.
+    Returns the likeliest state and its probability.
     :return: (state, probability)
     """
     return max(states.items(), key=operator.itemgetter(1))
 
 
-def _take_answer(question: str, model=None, data_path: str = None, opt=None) -> bool:
+def _take_answer(question: str, dataset, model=None, opt=None) -> bool:
     print(f'{question}: correct/incorrect? [1/0]')
     # TODO: Get the question image and see if model can predict it correctly
     #  Example: Let the question be triangle_diff1.
@@ -37,15 +40,16 @@ def _take_answer(question: str, model=None, data_path: str = None, opt=None) -> 
     #  After that, use the model to try to predict what shape is on that image.
     #  Return true or false based on the prediction
 
-    # data, target, path = load_image_by_shape_and_difficulty(question, data_path)
-    # data = data.to(opt.device)
-    # target = target.to(opt.device)
-    # res = model(data)
-    # probs = F.softmax(res, dim=1)
-    # probs = probs.to(opt.device)
-    # _, pred = torch.max(probs, dim=1)
-    # return pred == target
-    return int(input()) == 1
+    shape, difficulty = question.split('_')
+
+    data, target, path = load_image_by_shape_difficulty(dataset, shape, difficulty)
+    data = data.to(opt.device)
+    target = target.to(opt.device)
+    res = model(data)
+    probs = F.softmax(res, dim=1)
+    probs = probs.to(opt.device)
+    _, pred = torch.max(probs, dim=1)
+    return pred == target
 
 
 def questioning_rule(states: dict[Tuple[str], float]) -> str:
@@ -75,7 +79,7 @@ def response_rule(question: str, states: dict[Tuple[str], float]) -> float:
 
 def updating_rule(question: str, answer_correct: bool, r: float, states: dict[Tuple[str], float]):
     """
-    Updates probabilites on passed states.
+    Updates probabilities on passed states.
     :param question: question the answer is given to
     :param answer_correct: whether answer is correct
     :param r: response rule output
@@ -91,7 +95,7 @@ def updating_rule(question: str, answer_correct: bool, r: float, states: dict[Tu
             states[state] *= theta_compl
         else:
             states[state] *= theta
-    _scale_probabilites(states)
+    _scale_probabilities(states)
 
 
 def final_state(states: dict[Tuple[str], float]):
@@ -100,12 +104,12 @@ def final_state(states: dict[Tuple[str], float]):
 
 
 def stochastic_markov(states: dict[Tuple[str] | Tuple[str, str] | Tuple[str, str, str], float],
-                      model=None, data_path=None, opt=None) -> Tuple[str]:
+                      model=None, dataset=None, opt=None) -> Tuple[str]:
     max_iter = 100
     for _ in range(max_iter):
         question = questioning_rule(states)
         r = response_rule(question, states)
-        answer_correct = _take_answer(question, model, data_path, opt)
+        answer_correct = _take_answer(question, dataset, model, opt)
         updating_rule(question, answer_correct, r, states)
         print(states)
         final = final_state(states)
@@ -115,10 +119,36 @@ def stochastic_markov(states: dict[Tuple[str] | Tuple[str, str] | Tuple[str, str
     print('Non-conclusive.')
 
 
+def load_markov_dataset(data_path):
+    transform = transforms.Compose([
+        transforms.Grayscale(),
+        transforms.ToTensor(),
+    ])
+
+    return ImageFolderWithPaths(root=data_path, transform=transform)
+
+
+states_probs = {
+    ('ellipse_1'):  1 / 12,
+    ('ellipse_2'):  1 / 12,
+    ('ellipse_3'):  1 / 12,
+    ('ellipse_4'):  1 / 12,
+
+    ('square_1'):   1 / 12,
+    ('square_2'):   1 / 12,
+    ('square_3'):   1 / 12,
+    ('square_4'):   1 / 12,
+
+    ('triangle_1'): 1 / 12,
+    ('triangle_2'): 1 / 12,
+    ('triangle_3'): 1 / 12,
+    ('triangle_4'): 1 / 12,
+}
+
+
 def demo():
-    states = {('a'): 0.125, ('a', 'b'): 0.25, ('b'): 0.125, ('a', 'b', 'c'): 0.5}
-    print(states)
-    stochastic_markov(states)
+    print(states_probs)
+    stochastic_markov(states_probs, dataset=load_markov_dataset('../../data/generated_images/dataset3'))
 
 
 if __name__ == '__main__':
