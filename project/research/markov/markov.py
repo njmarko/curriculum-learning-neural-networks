@@ -1,9 +1,17 @@
+from itertools import chain, combinations
+
 import torch
 from torch import optim
 
 from models.cnn_v1 import CnnV1
-from research.markov.stochastic_markov import stochastic_markov
+from research.markov.stochastic_markov import stochastic_markov, load_markov_dataset
 from train import create_arg_parser
+
+
+def powerset(iterable):
+    "powerset([1,2,3]) --> () (1,) (2,) (3,) (1,2) (1,3) (2,3) (1,2,3)"
+    s = list(iterable)
+    return chain.from_iterable(combinations(s, r) for r in range(len(s) + 1))
 
 
 def main():
@@ -36,11 +44,26 @@ def main():
     model.to(opt.device)
     model.eval()
 
-    # TODO: How to choose initial state probabilities?
-    states = {'triangle_diff1': 0.125, ('triangle_diff1', 'square_diff1'): 0.25, 'square_diff1': 0.125,
-              ('triangle_diff1', 'square_diff1', 'ellipse_diff1'): 0.5}
-    data_path = opt.dataset
-    stochastic_markov(states, model, data_path, opt)
+    states = {
+        ('ellipse_1'): 1 / 12,
+        ('ellipse_2'): 1 / 12,
+        ('ellipse_3'): 1 / 12,
+        ('ellipse_4'): 1 / 12,
+        ('square_1'): 1 / 12,
+        ('square_2'): 1 / 12,
+        ('square_3'): 1 / 12,
+        ('square_4'): 1 / 12,
+        ('triangle_1'): 1 / 12,
+        ('triangle_2'): 1 / 12,
+        ('triangle_3'): 1 / 12,
+        ('triangle_4'): 1 / 12,
+    }
+
+    dataset = load_markov_dataset('../../' + opt.dataset)
+
+    powset = list(powerset(states.keys()))[1:]
+    states = dict(zip(powset, [1 / len(powset)] * len(powset)))
+    stochastic_markov(states, model, dataset, opt)
 
 
 if __name__ == "__main__":

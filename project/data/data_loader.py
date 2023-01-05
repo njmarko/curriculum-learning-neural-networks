@@ -41,7 +41,7 @@ def load_dataset(base_dir, lengths=None, batch_size=64, shuffle=True, num_worker
 
 
 def load_dataset_curriculum(base_dir, p, knowledge_hierarchy, lengths=None, batch_size=64, shuffle=True, num_workers=4,
-                            pin_memory=False, seed=-1):
+                            pin_memory=False, curriculum_sample_size=None, seed=-1):
     if lengths is None:
         lengths = [0.8, 0.2]
     transform = transforms.Compose([
@@ -64,7 +64,8 @@ def load_dataset_curriculum(base_dir, p, knowledge_hierarchy, lengths=None, batc
         num_at_same_level = sum(1 for v in knowledge_hierarchy.values() if v == knowledge_hierarchy[key])
         new_weights.append(p[knowledge_hierarchy[key]] / num_at_same_level)
 
-    train_sampler = WeightedRandomSampler(new_weights, len(data_splits[0]), replacement=True)
+    sample_size = curriculum_sample_size or len(data_splits[0])
+    train_sampler = WeightedRandomSampler(new_weights, sample_size, replacement=True)
     val_sampler = RandomSampler(data_splits[1])  # Test is always sampled uniformly
     test_sampler = RandomSampler(data_splits[2])  # Test is always sampled uniformly
     samplers = [train_sampler, val_sampler, test_sampler]
@@ -86,6 +87,3 @@ def load_image_by_shape_difficulty(dataset, shape, difficulty):
     selected_candidate = dataset[selected_candidate_idx]  # a tuple of shape (data, target, path)
 
     return selected_candidate
-
-
-load_image_by_shape_difficulty('', 'square', 1)

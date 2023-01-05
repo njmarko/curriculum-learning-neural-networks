@@ -29,11 +29,12 @@ def _likeliest_state(states: dict[Tuple[str], float]) -> Tuple[Tuple[str], float
     Returns the likeliest state and its probability.
     :return: (state, probability)
     """
-    return max(states.items(), key=operator.itemgetter(1))
+    # return max(states.items(), key=operator.itemgetter(1))
+    return random.choice([(k, v) for k, v in states.items() if v == max(states.values())])
 
 
 def _take_answer(question: str, dataset, model=None, opt=None) -> bool:
-    print(f'{question}: correct/incorrect? [1/0]')
+    # print(f'{question}: correct/incorrect? [1/0]')
     # TODO: Get the question image and see if model can predict it correctly
     #  Example: Let the question be triangle_diff1.
     #  First randomly select an image that has the same shape and difficulty.
@@ -43,13 +44,15 @@ def _take_answer(question: str, dataset, model=None, opt=None) -> bool:
     shape, difficulty = question.split('_')
 
     data, target, path = load_image_by_shape_difficulty(dataset, shape, difficulty)
+    target = torch.tensor(target, device=opt.device)
+    data = torch.cat(64 * [data.unsqueeze(0)])
     data = data.to(opt.device)
-    target = target.to(opt.device)
+    target = torch.repeat_interleave(target, 64)
     res = model(data)
     probs = F.softmax(res, dim=1)
     probs = probs.to(opt.device)
     _, pred = torch.max(probs, dim=1)
-    return pred == target
+    return pred[0] == target[0]
 
 
 def questioning_rule(states: dict[Tuple[str], float]) -> str:
@@ -105,13 +108,13 @@ def final_state(states: dict[Tuple[str], float]):
 
 def stochastic_markov(states: dict[Tuple[str] | Tuple[str, str] | Tuple[str, str, str], float],
                       model=None, dataset=None, opt=None) -> Tuple[str]:
-    max_iter = 100
+    max_iter = 200
     for _ in range(max_iter):
         question = questioning_rule(states)
         r = response_rule(question, states)
         answer_correct = _take_answer(question, dataset, model, opt)
         updating_rule(question, answer_correct, r, states)
-        print(states)
+        # print(states)
         final = final_state(states)
         if final is not None:
             print(final)
@@ -126,30 +129,3 @@ def load_markov_dataset(data_path):
     ])
 
     return ImageFolderWithPaths(root=data_path, transform=transform)
-
-
-states_probs = {
-    ('ellipse_1'):  1 / 12,
-    ('ellipse_2'):  1 / 12,
-    ('ellipse_3'):  1 / 12,
-    ('ellipse_4'):  1 / 12,
-
-    ('square_1'):   1 / 12,
-    ('square_2'):   1 / 12,
-    ('square_3'):   1 / 12,
-    ('square_4'):   1 / 12,
-
-    ('triangle_1'): 1 / 12,
-    ('triangle_2'): 1 / 12,
-    ('triangle_3'): 1 / 12,
-    ('triangle_4'): 1 / 12,
-}
-
-
-def demo():
-    print(states_probs)
-    stochastic_markov(states_probs, dataset=load_markov_dataset('../../data/generated_images/dataset3'))
-
-
-if __name__ == '__main__':
-    demo()

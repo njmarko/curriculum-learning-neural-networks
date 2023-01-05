@@ -87,8 +87,10 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
     parser.add_argument('-initial_p', '--initial_p', type=float, default=0.8,
                         help="Initial probability for geometric distribution for experiment with "
                              "curriculum learning that uses weighted random sampler")
-    parser.add_argument('-epoch_per_curriculum', '--epoch_per_curriculum', type=int, default=1,
+    parser.add_argument('-epoch_per_curriculum', '--epoch_per_curriculum', type=int, default=3,
                         help="How many epochs to train before switching to a new curriculum")
+    parser.add_argument('-curriculum_sample_size', '--curriculum_sample_size', type=int, default=1000,
+                        help="How many example to sample for training when curriculum learning is performed")
     opt = parser.parse_args()
 
     if opt.seed_everything >= 0:
@@ -122,6 +124,21 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
         "ellipse_diff4": 4,
     }
 
+    knowledge_hierarchy_default = {
+        "triangle_diff1": 0,
+        "triangle_diff2": 1,
+        "triangle_diff3": 2,
+        "triangle_diff4": 3,
+        "square_diff1": 0,
+        "square_diff2": 1,
+        "square_diff3": 2,
+        "square_diff4": 3,
+        "ellipse_diff1": 0,
+        "ellipse_diff2": 1,
+        "ellipse_diff3": 2,
+        "ellipse_diff4": 3,
+    }
+
     train_loader, val_loader, test_loader = load_dataset_curriculum(base_dir=opt.dataset, batch_size=opt.batch_size,
                                                                     lengths=[opt.training_split, opt.validation_split,
                                                                              opt.evaluation_split],
@@ -130,13 +147,14 @@ def run_experiment(model_id, max_epoch=100, max_score=1, *args, **kwargs):
                                                                     seed=opt.seed_dataset,
                                                                     p=p,
                                                                     knowledge_hierarchy=knowledge_hierarchy,
+                                                                    curriculum_sample_size=opt.curriculum_sample_size,
                                                                     )
 
     # print(debug_dataloader_samplers(val_loader, 2, knowledge_hierarchy))
 
     # TODO: Determine optimal step_size_up for cyclicLR scheduler.
     if opt.step_size_up <= 0:
-        opt.step_size_up = 2 * len(train_loader.dataset) // opt.batch_size
+        opt.step_size_up = 2 * opt.curriculum_sample_size // opt.batch_size
 
     wb_run_train = wandb.init(entity=opt.entity, project=opt.project_name, group=opt.group,
                               # save_code=True, # Pycharm complains about duplicate code fragments
