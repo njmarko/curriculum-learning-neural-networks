@@ -48,6 +48,7 @@ def load_dataset_curriculum(base_dir, p, knowledge_hierarchy, lengths=None, batc
         transforms.Grayscale(),
         transforms.ToTensor(),
     ])
+
     generator = torch.Generator()
     if seed >= 0:
         generator = generator.manual_seed(seed)
@@ -87,3 +88,12 @@ def load_image_by_shape_difficulty(dataset, shape, difficulty):
     selected_candidate = dataset[selected_candidate_idx]  # a tuple of shape (data, target, path)
 
     return selected_candidate
+
+def load_dataset_iita(base_dir):
+    transform = transforms.Compose([
+        transforms.Grayscale(),
+        transforms.ToTensor(),
+    ])
+
+    dataset = ImageFolderWithPaths(root=base_dir, transform=transform)
+    return DataLoader(dataset, batch_size=1)

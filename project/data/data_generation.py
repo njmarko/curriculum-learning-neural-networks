@@ -19,7 +19,7 @@ IMG_DIM = 96
 MAX_OFFSET = 10  # TODO: Not used. Remove if not needed
 DATASET_SIZE = 1000
 DATASET_BASE_DIR = 'generated_images/dataset5/'
-COLOR_GRADIENT_THRESHOLD = 50
+COLOR_GRADIENT_THRESHOLD = 75
 
 
 def get_difficulty_level():
@@ -122,7 +122,7 @@ def calculate_angle(opposite, s1, s2):
 
 
 def generate_triangle(difficulty=1):
-    SIDE_THRESHOLD = 5
+    SIDE_THRESHOLD = 15
     ANGLE_TRESHOLD = 150
     TRANSLATE_RANGE = IMG_DIM
     SCALE_RANGE = 2
@@ -194,8 +194,8 @@ def get_square_points():
 def generate_square(difficulty=2):
     points = get_square_points()
     TRANSLATE_RANGE = IMG_DIM // 2
-    HEIGHT_THRESHOLD = 5
-    SIDE_THRESHOLD = 5
+    HEIGHT_THRESHOLD = 15
+    SIDE_THRESHOLD = 15
 
     while True:
         if difficulty == 1:
@@ -264,8 +264,8 @@ def get_overlapping_line(points):
 
 def generate_ellipse(difficulty):
     center_original = np.array([IMG_DIM // 2, IMG_DIM // 2])
-    MAIN_AXIS_LENGHT_THRESHOLD = 5
-    SIDE_AXIS_LENGHT_THRESHOLD = 5
+    MAIN_AXIS_LENGHT_THRESHOLD = 15
+    SIDE_AXIS_LENGHT_THRESHOLD = 15
     TRANSLATE_RANGE = IMG_DIM // 4
     total_errors = 0
     total_time_in_errors = 0
@@ -328,6 +328,7 @@ def generate_dataset(dataset_size=1000, path_folder="generated_images/dataset1/"
     error_time = 0
     total_errors = 0
     for i, pair in enumerate(prod):
+        print(f'Generating image no. {i+1}')
         img = np.zeros((IMG_DIM, IMG_DIM), dtype='uint8')
         while True:
             bg_color = random.randint(0, 255)
@@ -426,6 +427,10 @@ def generate_by_difficulty(dataset_size=250, path_folder="generated_images/datas
     print(f"Total errors {total_errors}\nTotal time in ellipse errors {error_time}")
 
 
+def generate_iita_dataset():
+    generate_dataset(12, 'generated_images/iita_dataset/')
+
+
 def main():
     # img = np.zeros((IMG_DIM, IMG_DIM), dtype='uint8')
 
@@ -458,9 +463,12 @@ def main():
     # cv2.waitKey(0)
     #
     # cv2.destroyAllWindows()
-    # generate_dataset(DATASET_SIZE, DATASET_BASE_DIR)
-    for i in range(1, 5):
-        generate_by_difficulty(30, ".\\generated_images\\dataset2\\", i)
+
+    generate_iita_dataset()
+    # generate_dataset(10000, 'generated_images/final_dataset')
+
+    # for i in range(1, 5):
+    #     generate_by_difficulty(30, ".\\generated_images\\dataset2\\", i)
     # train, test = load_dataset(DATASET_BASE_DIR)
 
 
